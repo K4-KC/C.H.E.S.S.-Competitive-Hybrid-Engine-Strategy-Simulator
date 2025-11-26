@@ -69,7 +69,7 @@ func setup_ui():
 	promotion_panel = PanelContainer.new()
 	promotion_panel.visible = false
 	promotion_panel.anchors_preset = Control.PRESET_CENTER # Center on screen
-	promotion_panel.position = Vector2(0, 0) # Fallback position if centering fails in some setups
+	promotion_panel.position = Vector2(10, 52) # Fallback position if centering fails in some setups
 	canvas.add_child(promotion_panel)
 	
 	var hbox = HBoxContainer.new()
