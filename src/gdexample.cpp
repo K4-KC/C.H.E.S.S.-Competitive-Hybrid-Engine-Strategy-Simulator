@@ -32,7 +32,7 @@ void GDExample::_process(double delta)
 
         Vector2 new_position = Vector2(
             amplitude + (amplitude * sin(time_passed * 2.0)),
-            amplitude + (amplitude * cos(time_passed * 1.5))
+            0
         );
 
         set_position(new_position);

@@ -17,7 +17,7 @@ env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 
 library = env.SharedLibrary(
-    "chess_test/bin/libgdexample{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    "chess-test/bin/libgdexample{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
     source=sources,
 )
     
