@@ -1,5 +1,9 @@
-[gd_scene format=3 uid="uid://cv0bo85en5i31"]
+[gd_scene load_steps=2 format=3 uid="uid://cv0bo85en5i31"]
+
+[ext_resource type="Script" uid="uid://bv4bgwggkc3k4" path="res://scenes/nn_view.gd" id="1_qricl"]
 
 [node name="NnView" type="Node2D"]
+script = ExtResource("1_qricl")
 
 [node name="NNNode" type="NNNode" parent="."]
+metadata/network_layers = [3, 5, 4, 2]
