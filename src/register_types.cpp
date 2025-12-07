@@ -1,6 +1,6 @@
 #include "register_types.h"
 
-#include "NNNode.h"
+#include "NeuralNet.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -9,17 +9,17 @@
 
 using namespace godot;
 
-void initialize_nnnode_module(ModuleInitializationLevel p_level)
+void initialize_neuralnet_module(ModuleInitializationLevel p_level)
 {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE)
     {
         return;
     }
 
-    ClassDB::register_class<NNNode>();
+    ClassDB::register_class<NeuralNet>();
 }
 
-void uninitialize_nnnode_module(ModuleInitializationLevel p_level)
+void uninitialize_neuralnet_module(ModuleInitializationLevel p_level)
 {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE)
     {
@@ -34,8 +34,8 @@ extern "C"
     {
         godot::GDExtensionBinding::InitObject init_obj(p_get_proc_address, p_library, r_initialization);
 
-        init_obj.register_initializer(initialize_nnnode_module);
-        init_obj.register_terminator(uninitialize_nnnode_module);
+        init_obj.register_initializer(initialize_neuralnet_module);
+        init_obj.register_terminator(uninitialize_neuralnet_module);
         init_obj.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
 
         return init_obj.init();

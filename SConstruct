@@ -17,7 +17,7 @@ env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 
 library = env.SharedLibrary(
-    "chess_godot/bin/NNNode{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    "chess_godot/bin/NeuralNet{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
     source=sources,
 )
 
