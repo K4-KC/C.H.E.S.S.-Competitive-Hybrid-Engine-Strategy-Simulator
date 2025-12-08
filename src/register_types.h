@@ -8,4 +8,4 @@ using namespace godot;
 void initialize_chess_ai_module(ModuleInitializationLevel p_level);
 void uninitialize_chess_ai_module(ModuleInitializationLevel p_level);
 
-#endif // CHESS_AI_REGISTER_TYPES_H
+#endif

@@ -9,6 +9,6 @@
 
 *.obj
 *.dblite
-src/NNNode.windows.template_debug.x86_64.obj
+src/*.obj
 
 /venv

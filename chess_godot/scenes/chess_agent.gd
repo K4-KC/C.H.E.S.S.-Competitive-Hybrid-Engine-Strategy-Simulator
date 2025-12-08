@@ -4,62 +4,72 @@ const AI_COLOR = 1
 var agent_module = null
 
 func _ready():
-	super._ready()
-	
-	# Check if the class is registered
-	if not ClassDB.class_exists("ChessAgent"):
-		printerr("CRITICAL ERROR: 'ChessAgent' class not found in ClassDB.")
-		printerr("Ensure your GDExtension is compiled and the .gdextension file is correct.")
-		return
+	# Standard setup
+	var hl_node = Node2D.new()
+	hl_node.name = "Highlights"
+	add_child(hl_node)
+	var pieces_node = Node2D.new()
+	pieces_node.name = "Pieces"
+	add_child(pieces_node)
 
-	# Try to instantiate
-	agent_module = ClassDB.instantiate("ChessAgent")
+	board_rules = BoardRules.new()
+	add_child(board_rules)
 	
-	if agent_module:
+	if ClassDB.class_exists("ChessAgent"):
+		agent_module = ClassDB.instantiate("ChessAgent")
 		add_child(agent_module)
-		print("C++ ChessAgent successfully loaded and added to scene.")
+		print("C++ ChessAgent initialized.")
 	else:
-		printerr("CRITICAL ERROR: Failed to instantiate 'ChessAgent'.")
+		printerr("CRITICAL: ChessAgent class missing.")
 
+	setup_ui()
+	board_rules.setup_board([]) 
+	refresh_visuals()
 
-func finalize_turn():
-	super.finalize_turn()
-	if turn == AI_COLOR:
+func _input(event):
+	if board_rules.get_turn() == AI_COLOR:
+		return
+	super._input(event)
+
+func refresh_visuals():
+	super.refresh_visuals()
+	if board_rules.get_turn() == AI_COLOR:
 		call_deferred("perform_ai_turn")
 
 func perform_ai_turn():
-	# 1. Get Valid Moves (using existing GDScript logic)
-	var raw_moves = get_all_valid_moves(AI_COLOR)
-	if raw_moves.is_empty(): return
-	
-	# 2. Format Moves for C++
-	# We only need start/end vectors for the C++ agent to identify the move
-	var simple_moves = []
-	for m in raw_moves:
-		simple_moves.append({ "start": m.start, "end": m.end })
-	
-	# 3. Format Board for C++
-	# Flatten 2D board to 1D integer array
+	var possible_moves = board_rules.get_all_possible_moves(AI_COLOR)
+	if possible_moves.is_empty():
+		print("AI has no moves.")
+		return
+
 	var simple_board = []
 	for y in range(8):
 		for x in range(8):
-			var p = board[x][y]
+			var data = board_rules.get_data_at(x, y)
 			var val = 0
-			if p != null:
-				# Encoding: White 1-6, Black 7-12
-				# Types: p=0, n=1, b=2, r=3, q=4, k=5 (index in array)
-				var types = ["p", "n", "b", "r", "q", "k"]
-				var type_idx = types.find(p.type)
-				val = (type_idx + 1) + (p.color * 6)
+			if not data.is_empty():
+				var type_map = {"p": 1, "n": 2, "b": 3, "r": 4, "q": 5, "k": 6}
+				var base = type_map.get(data["type"], 0)
+				if base > 0:
+					val = base + (data["color"] * 6)
 			simple_board.append(val)
-	
-	# 4. Call C++
-	var best_move_dict = agent_module.select_best_move(simple_board, simple_moves)
-	
-	# 5. Execute
-	if best_move_dict.has("start"):
-		# Find the original full move object to execute (to handle piece references safely)
-		for m in raw_moves:
-			if m.start == best_move_dict.start and m.end == best_move_dict.end:
-				execute_move(m.piece, m.start, m.end)
-				break
+
+	var best_move = agent_module.select_best_move(simple_board, possible_moves)
+
+	if best_move.has("start") and best_move.has("end"):
+		var start = best_move["start"]
+		var end = best_move["end"]
+		
+		# Execute
+		var result = board_rules.attempt_move(start, end)
+		
+		if result == 2:
+			# AI Promotion
+			board_rules.commit_promotion("q")
+			# For AI, we must explicitly update visuals here because the UI callback isn't used
+			update_last_move_visuals(start, end)
+			refresh_visuals()
+		elif result == 1:
+			# Normal Move
+			update_last_move_visuals(start, end)
+			refresh_visuals()
