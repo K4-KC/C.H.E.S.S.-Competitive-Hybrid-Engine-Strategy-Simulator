@@ -40,27 +40,19 @@ func refresh_visuals():
 	if board_rules.get_turn() == AI_COLOR:
 		call_deferred("perform_ai_turn")
 
-# Build a compact integer board representation and ask the agent for the best move.
+# Ask the agent for the best move using the pre-calculated board states.
 func perform_ai_turn():
+	# get_all_possible_moves now returns an array of Dictionaries, each containing:
+	# { "start": Vector2, "end": Vector2, "board": Array[Array[Dictionary]], "promotion": String }
 	var possible_moves = board_rules.get_all_possible_moves(AI_COLOR)
+	
 	if possible_moves.is_empty():
 		print("AI has no moves.")
 		return
 
-	var simple_board = []
-	for y in range(8):
-		for x in range(8):
-			var data = board_rules.get_data_at(x, y)
-			var val = 0
-			if not data.is_empty():
-				# Encode piece type and color into a single integer.
-				var type_map = {"p": 1, "n": 2, "b": 3, "r": 4, "q": 5, "k": 6}
-				var base = type_map.get(data["type"], 0)
-				if base > 0:
-					val = base + (data["color"] * 6)
-			simple_board.append(val)
-
-	var best_move = chess_agent.select_best_move(simple_board, possible_moves)
+	# We no longer need to generate a 'simple_board' here.
+	# The agent receives the full list of future states directly.
+	var best_move = chess_agent.select_best_move(possible_moves)
 
 	if best_move.has("start") and best_move.has("end"):
 		var start = best_move["start"]
@@ -70,7 +62,13 @@ func perform_ai_turn():
 		
 		if result == 2:
 			# AI Promotion
-			board_rules.commit_promotion("q")
+			# Use the promotion type decided by the AI, or default to Queen if missing
+			var promo = "q"
+			if best_move.has("promotion"):
+				promo = best_move["promotion"]
+			
+			board_rules.commit_promotion(promo)
+			
 			# For AI, we must explicitly update visuals here because the UI callback isn't used
 			update_last_move_visuals(start, end)
 			refresh_visuals()
