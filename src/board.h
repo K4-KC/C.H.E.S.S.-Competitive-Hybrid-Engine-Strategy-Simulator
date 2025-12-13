@@ -10,36 +10,55 @@
 #include <godot_cpp/variant/vector2i.hpp>
 #include <vector>
 #include <cstdint>
+#include <cstring>
 
 using namespace godot;
 
 // Piece type constants (lowest 3 bits)
-#define PIECE_NONE   0b000
-#define PIECE_PAWN   0b001
-#define PIECE_KNIGHT 0b010
-#define PIECE_BISHOP 0b011
-#define PIECE_ROOK   0b100
-#define PIECE_QUEEN  0b101
-#define PIECE_KING   0b110
+#define PIECE_NONE   0
+#define PIECE_PAWN   1
+#define PIECE_KNIGHT 2
+#define PIECE_BISHOP 3
+#define PIECE_ROOK   4
+#define PIECE_QUEEN  5
+#define PIECE_KING   6
 
 // Color constants (bits 3-4)
-#define COLOR_NONE  0b00000
-#define COLOR_WHITE 0b01000
-#define COLOR_BLACK 0b10000
+#define COLOR_NONE  0
+#define COLOR_WHITE 8
+#define COLOR_BLACK 16
 
 // Masks for bitwise operations
-#define PIECE_TYPE_MASK 0b00111
-#define COLOR_MASK      0b11000
+#define PIECE_TYPE_MASK 7
+#define COLOR_MASK      24
 
-// Helper macros
+// Helper macros - inline for performance
 #define GET_PIECE_TYPE(square) ((square) & PIECE_TYPE_MASK)
 #define GET_COLOR(square) ((square) & COLOR_MASK)
 #define MAKE_PIECE(type, color) ((type) | (color))
-#define IS_EMPTY(square) (GET_PIECE_TYPE(square) == PIECE_NONE)
-#define IS_WHITE(square) (GET_COLOR(square) == COLOR_WHITE)
-#define IS_BLACK(square) (GET_COLOR(square) == COLOR_BLACK)
+#define IS_EMPTY(square) (((square) & PIECE_TYPE_MASK) == 0)
+#define IS_WHITE(square) (((square) & COLOR_MASK) == COLOR_WHITE)
+#define IS_BLACK(square) (((square) & COLOR_MASK) == COLOR_BLACK)
 
-// Move structure for internal representation
+// Direction constants
+#define DIR_N   8
+#define DIR_S  -8
+#define DIR_E   1
+#define DIR_W  -1
+#define DIR_NE  9
+#define DIR_NW  7
+#define DIR_SE -7
+#define DIR_SW -9
+
+// Lightweight move for perft - 32 bits total
+struct FastMove {
+    uint8_t from;
+    uint8_t to;
+    uint8_t flags;  // bit 0: capture, bit 1: ep, bit 2: castling, bits 3-5: promotion piece
+    uint8_t captured;
+};
+
+// Full move structure for game history
 struct Move {
     uint8_t from;
     uint8_t to;
@@ -49,23 +68,35 @@ struct Move {
     bool is_en_passant;
     uint8_t en_passant_target_before;
     uint8_t halfmove_clock_before;
-    bool castling_rights_before[4]; // WK, WQ, BK, BQ
+    bool castling_rights_before[4];
+};
+
+// Pre-allocated move list to avoid heap allocations
+struct MoveList {
+    FastMove moves[256];  // Max possible moves in any position is ~218
+    int count;
+    
+    inline void clear() { count = 0; }
+    inline void add(uint8_t from, uint8_t to, uint8_t flags = 0, uint8_t captured = 0) {
+        moves[count++] = {from, to, flags, captured};
+    }
 };
 
 class Board : public Node2D {
     GDCLASS(Board, Node2D)
 
 private:
-    // Board state: 64 squares, each uint8_t encoding piece and color
+    // Board state: 64 squares
     uint8_t squares[64];
-    // NOTE: for piece offset and sliding calculations, use a single number to denote directions and positions instead of a rank and file
-    // Board indexing: 0=a1, 1=b1, ..., 7=h1, 8=a2, ..., 56=a8, 63=h8
-    // rank = pos / 8, file = pos % 8
+    
+    // Cached king positions for fast lookup
+    uint8_t white_king_pos;
+    uint8_t black_king_pos;
     
     // Game state
-    uint8_t turn; // 0 = White, 1 = Black
+    uint8_t turn;
     std::vector<Move> move_history;
-    std::vector<String> move_history_notation; // UCI notation for each move
+    std::vector<String> move_history_notation;
     
     // Castling rights: [0]=WK, [1]=WQ, [2]=BK, [3]=BQ
     bool castling_rights[4];
@@ -73,30 +104,61 @@ private:
     // En passant target square (0-63, or 255 if none)
     uint8_t en_passant_target;
     
-    // Halfmove clock for 50-move rule
+    // Halfmove clock and fullmove number
     uint8_t halfmove_clock;
-    
-    // Fullmove number
     uint16_t fullmove_number;
     
-    // For promotion handling
+    // Promotion handling
     uint8_t promotion_pending_from;
     uint8_t promotion_pending_to;
     bool promotion_pending;
 
-    // Internal helper functions
+    // ==================== PRECOMPUTED TABLES ====================
+    // These are initialized once at startup
+    
+    // Attack tables for knights and kings (bitmask would be better but this works)
+    static bool knight_attacks_initialized;
+    static uint8_t knight_attack_squares[64][8];
+    static uint8_t knight_attack_count[64];
+    static uint8_t king_attack_squares[64][8];
+    static uint8_t king_attack_count[64];
+    
+    // Squares to edge in each direction (for sliding pieces)
+    static uint8_t squares_to_edge[64][8];  // N, S, E, W, NE, NW, SE, SW
+    
+    static void init_attack_tables();
+    
+    // ==================== INTERNAL HELPERS ====================
     void clear_board();
     void initialize_starting_position();
     bool parse_fen(const String &fen);
     String generate_fen() const;
+    void update_king_cache();
 
-    // Move validation helpers
-    bool is_square_attacked(uint8_t pos, uint8_t attacking_color) const;
+    // Fast attack detection (no Array allocation)
+    bool is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const;
+    
+    // Fast move generation directly into MoveList (no Array allocation)
+    void generate_pawn_moves(uint8_t pos, MoveList &moves) const;
+    void generate_knight_moves(uint8_t pos, MoveList &moves) const;
+    void generate_bishop_moves(uint8_t pos, MoveList &moves) const;
+    void generate_rook_moves(uint8_t pos, MoveList &moves) const;
+    void generate_queen_moves(uint8_t pos, MoveList &moves) const;
+    void generate_king_moves(uint8_t pos, MoveList &moves) const;
+    void generate_castling_moves(uint8_t pos, MoveList &moves) const;
+    void generate_all_pseudo_legal(MoveList &moves) const;
+    
+    // Fast make/unmake for perft (minimal state tracking)
+    void make_move_fast(const FastMove &m);
+    void unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling_before[4]);
+    
+    // Perft internal recursive function
+    uint64_t perft_internal(int depth);
+    
+    // Legacy helpers for public API
     bool is_king_in_check(uint8_t color) const;
     bool would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color);
-    uint8_t find_king(uint8_t color) const;
     
-    // Pseudo-legal move generation (doesn't check for checks)
     void add_pawn_moves(uint8_t pos, Array &moves) const;
     void add_knight_moves(uint8_t pos, Array &moves) const;
     void add_sliding_moves(uint8_t pos, Array &moves, const int directions[][2], int num_directions) const;
@@ -106,16 +168,13 @@ private:
     void add_king_moves(uint8_t pos, Array &moves) const;
     Array get_pseudo_legal_moves_for_piece(uint8_t pos) const;
     
-    // Move execution
     void make_move_internal(uint8_t from, uint8_t to, Move &move_record);
     void revert_move_internal(const Move &move);
     
-    // Castling helpers
     bool can_castle_kingside(uint8_t color) const;
     bool can_castle_queenside(uint8_t color) const;
     void add_castling_moves(uint8_t pos, Array &moves) const;
     
-    // Move notation
     String move_to_notation(const Move &move) const;
 
 protected:
@@ -125,41 +184,45 @@ public:
     Board();
     ~Board();
 
-    // Godot lifecycle
     void _ready();
     
-    // Public API
-    uint8_t get_turn() const; // Returns 0 for White and 1 for Black
+    // Public API (unchanged interface)
+    uint8_t get_turn() const;
     uint8_t get_piece_on_square(uint8_t pos) const;
-    void set_piece_on_square(uint8_t pos, uint8_t piece); // For testing/setup
+    void set_piece_on_square(uint8_t pos, uint8_t piece);
     
-    void setup_board(const String &fen_notation); // Use FEN notation (empty = starting position)
-    String get_fen() const; // Get current position as FEN
+    void setup_board(const String &fen_notation);
+    String get_fen() const;
     
-    uint8_t attempt_move(uint8_t start, uint8_t end); // 0=fail, 1=success, 2=promotion pending
-    void commit_promotion(const String &type_str); // 'q','r','b','n'
+    uint8_t attempt_move(uint8_t start, uint8_t end);
+    void commit_promotion(const String &type_str);
     
-    void revert_move(); // Undo last move
-    Array get_moves() const; // Returns array of move strings in UCI notation
+    void revert_move();
+    Array get_moves() const;
     
     // AI/Analysis functions
-    Array get_all_possible_moves(uint8_t color); // Returns array of {from, to} dictionaries
-    Array get_legal_moves_for_piece(uint8_t square); // Returns array of target squares
-    uint32_t count_all_moves(uint8_t depth); // Count of all legal moves for color at a depth
-    void make_move(uint8_t start, uint8_t end); // Direct move without validation (for AI)
+    Array get_all_possible_moves(uint8_t color);
+    Array get_legal_moves_for_piece(uint8_t square);
+    uint64_t count_all_moves(uint8_t depth);  // Changed to uint64_t for large depths
+    void make_move(uint8_t start, uint8_t end);
     
     // Game state queries
     bool is_checkmate(uint8_t color);
     bool is_stalemate(uint8_t color);
     bool is_check(uint8_t color) const;
     bool is_game_over();
-    int get_game_result(); // 0=ongoing, 1=white wins, 2=black wins, 3=draw
+    int get_game_result();
     
     // Utility
-    Vector2i pos_to_coords(uint8_t pos) const; // Convert 0-63 to (rank, file)
-    uint8_t coords_to_pos(int rank, int file) const; // Convert (rank, file) to 0-63
-    String square_to_algebraic(uint8_t pos) const; // e.g., 0 -> "a1"
-    uint8_t algebraic_to_square(const String &algebraic) const; // e.g., "e4" -> 28
+    Vector2i pos_to_coords(uint8_t pos) const;
+    uint8_t coords_to_pos(int rank, int file) const;
+    String square_to_algebraic(uint8_t pos) const;
+    uint8_t algebraic_to_square(const String &algebraic) const;
+    
+    // Inline helper for fast king lookup
+    inline uint8_t get_king_pos(uint8_t color) const {
+        return (color == 0) ? white_king_pos : black_king_pos;
+    }
 };
 
 #endif // BOARD_H

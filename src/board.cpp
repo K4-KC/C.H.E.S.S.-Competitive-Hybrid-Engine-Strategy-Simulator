@@ -5,107 +5,99 @@
 
 using namespace godot;
 
-// Direction offsets for move generation
-// Using single index: North = +8, South = -8, East = +1, West = -1
-static const int DIRECTION_N = 8;
-static const int DIRECTION_S = -8;
-static const int DIRECTION_E = 1;
-static const int DIRECTION_W = -1;
-static const int DIRECTION_NE = 9;
-static const int DIRECTION_NW = 7;
-static const int DIRECTION_SE = -7;
-static const int DIRECTION_SW = -9;
+// ==================== STATIC TABLE INITIALIZATION ====================
 
-// Knight move offsets
-static const int KNIGHT_OFFSETS[8] = {
-    17,  // N+N+E
-    15,  // N+N+W
-    10,  // E+E+N
-    6,   // W+W+N
-    -6,  // E+E+S
-    -10, // W+W+S
-    -15, // S+S+E
-    -17  // S+S+W
+bool Board::knight_attacks_initialized = false;
+uint8_t Board::knight_attack_squares[64][8];
+uint8_t Board::knight_attack_count[64];
+uint8_t Board::king_attack_squares[64][8];
+uint8_t Board::king_attack_count[64];
+uint8_t Board::squares_to_edge[64][8];
+
+// Knight move offsets: {file_delta, rank_delta}
+static const int KNIGHT_DELTAS[8][2] = {
+    {1, 2}, {2, 1}, {2, -1}, {1, -2},
+    {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}
 };
 
-// Sliding piece directions
-static const int ROOK_DIRECTIONS[4] = { DIRECTION_N, DIRECTION_S, DIRECTION_E, DIRECTION_W };
-static const int BISHOP_DIRECTIONS[4] = { DIRECTION_NE, DIRECTION_NW, DIRECTION_SE, DIRECTION_SW };
-static const int QUEEN_DIRECTIONS[8] = { 
-    DIRECTION_N, DIRECTION_S, DIRECTION_E, DIRECTION_W,
-    DIRECTION_NE, DIRECTION_NW, DIRECTION_SE, DIRECTION_SW 
+// King move offsets
+static const int KING_DELTAS[8][2] = {
+    {0, 1}, {0, -1}, {1, 0}, {-1, 0},
+    {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
 };
 
-// Helper to check if a move stays on the board and doesn't wrap
-static inline bool is_valid_square(int sq) {
-    return sq >= 0 && sq < 64;
-}
+// Direction offsets (N, S, E, W, NE, NW, SE, SW)
+static const int DIR_OFFSETS[8] = {8, -8, 1, -1, 9, 7, -7, -9};
 
-// Check if moving from 'from' to 'to' wraps around the board edges
-static inline bool does_wrap(int from, int to, int direction) {
-    int from_file = from % 8;
-    int to_file = to % 8;
+void Board::init_attack_tables() {
+    if (knight_attacks_initialized) return;
     
-    // For east/west moves, check file wrapping
-    if (direction == DIRECTION_E || direction == DIRECTION_NE || direction == DIRECTION_SE) {
-        return to_file <= from_file; // Wrapped from h to a
+    for (int sq = 0; sq < 64; sq++) {
+        int file = sq % 8;
+        int rank = sq / 8;
+        
+        // Knight attacks
+        knight_attack_count[sq] = 0;
+        for (int i = 0; i < 8; i++) {
+            int new_file = file + KNIGHT_DELTAS[i][0];
+            int new_rank = rank + KNIGHT_DELTAS[i][1];
+            if (new_file >= 0 && new_file < 8 && new_rank >= 0 && new_rank < 8) {
+                knight_attack_squares[sq][knight_attack_count[sq]++] = new_rank * 8 + new_file;
+            }
+        }
+        
+        // King attacks
+        king_attack_count[sq] = 0;
+        for (int i = 0; i < 8; i++) {
+            int new_file = file + KING_DELTAS[i][0];
+            int new_rank = rank + KING_DELTAS[i][1];
+            if (new_file >= 0 && new_file < 8 && new_rank >= 0 && new_rank < 8) {
+                king_attack_squares[sq][king_attack_count[sq]++] = new_rank * 8 + new_file;
+            }
+        }
+        
+        // Squares to edge in each direction
+        // N, S, E, W, NE, NW, SE, SW
+        squares_to_edge[sq][0] = 7 - rank;           // N
+        squares_to_edge[sq][1] = rank;               // S
+        squares_to_edge[sq][2] = 7 - file;           // E
+        squares_to_edge[sq][3] = file;               // W
+        squares_to_edge[sq][4] = (7 - rank < 7 - file) ? 7 - rank : 7 - file;  // NE
+        squares_to_edge[sq][5] = (7 - rank < file) ? 7 - rank : file;          // NW
+        squares_to_edge[sq][6] = (rank < 7 - file) ? rank : 7 - file;          // SE
+        squares_to_edge[sq][7] = (rank < file) ? rank : file;                   // SW
     }
-    if (direction == DIRECTION_W || direction == DIRECTION_NW || direction == DIRECTION_SW) {
-        return to_file >= from_file; // Wrapped from a to h
-    }
-    return false;
+    
+    knight_attacks_initialized = true;
 }
 
-// Check if knight move is valid (doesn't wrap)
-static inline bool is_valid_knight_move(int from, int to) {
-    if (!is_valid_square(to)) return false;
-    
-    int from_file = from % 8;
-    int to_file = to % 8;
-    int file_diff = from_file - to_file;
-    if (file_diff < 0) file_diff = -file_diff;
-    
-    // Knight moves change file by 1 or 2
-    return file_diff == 1 || file_diff == 2;
-}
-
-// Check if king move is valid (doesn't wrap)
-static inline bool is_valid_king_move(int from, int to) {
-    if (!is_valid_square(to)) return false;
-    
-    int from_file = from % 8;
-    int to_file = to % 8;
-    int file_diff = from_file - to_file;
-    if (file_diff < 0) file_diff = -file_diff;
-    
-    return file_diff <= 1;
-}
+// ==================== CONSTRUCTOR/DESTRUCTOR ====================
 
 Board::Board() {
+    init_attack_tables();
     clear_board();
-    turn = 0; // White starts
+    turn = 0;
     en_passant_target = 255;
     halfmove_clock = 0;
     fullmove_number = 1;
     promotion_pending = false;
     promotion_pending_from = 0;
     promotion_pending_to = 0;
+    white_king_pos = 4;
+    black_king_pos = 60;
     
     for (int i = 0; i < 4; i++) {
         castling_rights[i] = true;
     }
 }
 
-Board::~Board() {
-}
+Board::~Board() {}
 
 void Board::_ready() {
-    // Initialize to starting position by default
     initialize_starting_position();
 }
 
 void Board::_bind_methods() {
-    // Bind public methods to Godot
     ClassDB::bind_method(D_METHOD("get_turn"), &Board::get_turn);
     ClassDB::bind_method(D_METHOD("get_piece_on_square", "pos"), &Board::get_piece_on_square);
     ClassDB::bind_method(D_METHOD("set_piece_on_square", "pos", "piece"), &Board::set_piece_on_square);
@@ -130,16 +122,30 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("algebraic_to_square", "algebraic"), &Board::algebraic_to_square);
 }
 
+// ==================== BOARD SETUP ====================
+
 void Board::clear_board() {
     memset(squares, 0, sizeof(squares));
     move_history.clear();
     move_history_notation.clear();
+    white_king_pos = 255;
+    black_king_pos = 255;
+}
+
+void Board::update_king_cache() {
+    white_king_pos = 255;
+    black_king_pos = 255;
+    for (int i = 0; i < 64; i++) {
+        if (GET_PIECE_TYPE(squares[i]) == PIECE_KING) {
+            if (IS_WHITE(squares[i])) white_king_pos = i;
+            else black_king_pos = i;
+        }
+    }
 }
 
 void Board::initialize_starting_position() {
     clear_board();
     
-    // Set up white pieces (rank 0 and 1)
     squares[0] = MAKE_PIECE(PIECE_ROOK, COLOR_WHITE);
     squares[1] = MAKE_PIECE(PIECE_KNIGHT, COLOR_WHITE);
     squares[2] = MAKE_PIECE(PIECE_BISHOP, COLOR_WHITE);
@@ -153,7 +159,6 @@ void Board::initialize_starting_position() {
         squares[i] = MAKE_PIECE(PIECE_PAWN, COLOR_WHITE);
     }
     
-    // Set up black pieces (rank 6 and 7)
     for (int i = 48; i < 56; i++) {
         squares[i] = MAKE_PIECE(PIECE_PAWN, COLOR_BLACK);
     }
@@ -167,33 +172,30 @@ void Board::initialize_starting_position() {
     squares[62] = MAKE_PIECE(PIECE_KNIGHT, COLOR_BLACK);
     squares[63] = MAKE_PIECE(PIECE_ROOK, COLOR_BLACK);
     
-    // Reset game state
     turn = 0;
-    for (int i = 0; i < 4; i++) {
-        castling_rights[i] = true;
-    }
+    for (int i = 0; i < 4; i++) castling_rights[i] = true;
     en_passant_target = 255;
     halfmove_clock = 0;
     fullmove_number = 1;
     promotion_pending = false;
+    white_king_pos = 4;
+    black_king_pos = 60;
 }
 
 bool Board::parse_fen(const String &fen) {
     clear_board();
     
-    // Split FEN into parts
     PackedStringArray parts = fen.split(" ");
     if (parts.size() < 1) return false;
     
-    // Parse piece placement
     String placement = parts[0];
-    int square = 56; // Start at a8
+    int square = 56;
     
     for (int i = 0; i < placement.length(); i++) {
         char32_t c = placement[i];
         
         if (c == '/') {
-            square -= 16; // Move to start of next rank down
+            square -= 16;
             continue;
         }
         
@@ -223,16 +225,14 @@ bool Board::parse_fen(const String &fen) {
         square++;
     }
     
-    // Parse active color
     if (parts.size() >= 2) {
         turn = (parts[1] == "b") ? 1 : 0;
     }
     
-    // Parse castling rights
-    castling_rights[0] = false; // WK
-    castling_rights[1] = false; // WQ
-    castling_rights[2] = false; // BK
-    castling_rights[3] = false; // BQ
+    castling_rights[0] = false;
+    castling_rights[1] = false;
+    castling_rights[2] = false;
+    castling_rights[3] = false;
     
     if (parts.size() >= 3 && parts[2] != "-") {
         String castling = parts[2];
@@ -245,31 +245,28 @@ bool Board::parse_fen(const String &fen) {
         }
     }
     
-    // Parse en passant target
     en_passant_target = 255;
     if (parts.size() >= 4 && parts[3] != "-") {
         en_passant_target = algebraic_to_square(parts[3]);
     }
     
-    // Parse halfmove clock
     halfmove_clock = 0;
     if (parts.size() >= 5) {
         halfmove_clock = parts[4].to_int();
     }
     
-    // Parse fullmove number
     fullmove_number = 1;
     if (parts.size() >= 6) {
         fullmove_number = parts[5].to_int();
     }
     
+    update_king_cache();
     return true;
 }
 
 String Board::generate_fen() const {
     String fen = "";
     
-    // Piece placement
     for (int rank = 7; rank >= 0; rank--) {
         int empty_count = 0;
         
@@ -295,27 +292,17 @@ String Board::generate_fen() const {
                     case PIECE_KING:   piece_char = 'k'; break;
                 }
                 
-                if (IS_WHITE(piece)) {
-                    piece_char -= 32; // To uppercase
-                }
-                
+                if (IS_WHITE(piece)) piece_char -= 32;
                 fen += String::chr(piece_char);
             }
         }
         
-        if (empty_count > 0) {
-            fen += String::num_int64(empty_count);
-        }
-        
-        if (rank > 0) {
-            fen += "/";
-        }
+        if (empty_count > 0) fen += String::num_int64(empty_count);
+        if (rank > 0) fen += "/";
     }
     
-    // Active color
     fen += (turn == 0) ? " w " : " b ";
     
-    // Castling rights
     String castling = "";
     if (castling_rights[0]) castling += "K";
     if (castling_rights[1]) castling += "Q";
@@ -324,7 +311,6 @@ String Board::generate_fen() const {
     if (castling.is_empty()) castling = "-";
     fen += castling;
     
-    // En passant target
     fen += " ";
     if (en_passant_target == 255) {
         fen += "-";
@@ -332,105 +318,74 @@ String Board::generate_fen() const {
         fen += square_to_algebraic(en_passant_target);
     }
     
-    // Halfmove clock
     fen += " " + String::num_int64(halfmove_clock);
-    
-    // Fullmove number
     fen += " " + String::num_int64(fullmove_number);
     
     return fen;
 }
 
-uint8_t Board::find_king(uint8_t color) const {
-    uint8_t target_color = (color == 0) ? COLOR_WHITE : COLOR_BLACK;
-    
-    for (int i = 0; i < 64; i++) {
-        if (GET_PIECE_TYPE(squares[i]) == PIECE_KING && GET_COLOR(squares[i]) == target_color) {
-            return i;
-        }
-    }
-    return 255; // King not found (shouldn't happen in valid game)
-}
+// ==================== FAST ATTACK DETECTION ====================
 
-bool Board::is_square_attacked(uint8_t pos, uint8_t attacking_color) const {
+bool Board::is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const {
     uint8_t attacker_color = (attacking_color == 0) ? COLOR_WHITE : COLOR_BLACK;
-    int target_pos = (int)pos;
     
-    // Check for pawn attacks
-    int pawn_direction = (attacking_color == 0) ? DIRECTION_S : DIRECTION_N;
-    int pawn_attack_squares[2] = { target_pos + pawn_direction + DIRECTION_W, 
-                                   target_pos + pawn_direction + DIRECTION_E };
-    
-    for (int i = 0; i < 2; i++) {
-        int sq = pawn_attack_squares[i];
-        if (is_valid_square(sq)) {
-            int file_diff = (sq % 8) - (target_pos % 8);
-            if (file_diff < 0) file_diff = -file_diff;
-            if (file_diff == 1) { // Valid diagonal attack
-                if (GET_PIECE_TYPE(squares[sq]) == PIECE_PAWN && GET_COLOR(squares[sq]) == attacker_color) {
-                    return true;
-                }
-            }
+    // Check knight attacks (using precomputed table)
+    for (int i = 0; i < knight_attack_count[pos]; i++) {
+        uint8_t sq = knight_attack_squares[pos][i];
+        if (GET_PIECE_TYPE(squares[sq]) == PIECE_KNIGHT && GET_COLOR(squares[sq]) == attacker_color) {
+            return true;
         }
     }
     
-    // Check for knight attacks
-    for (int i = 0; i < 8; i++) {
-        int sq = target_pos + KNIGHT_OFFSETS[i];
-        if (is_valid_knight_move(target_pos, sq)) {
-            if (GET_PIECE_TYPE(squares[sq]) == PIECE_KNIGHT && GET_COLOR(squares[sq]) == attacker_color) {
+    // Check king attacks (using precomputed table)
+    for (int i = 0; i < king_attack_count[pos]; i++) {
+        uint8_t sq = king_attack_squares[pos][i];
+        if (GET_PIECE_TYPE(squares[sq]) == PIECE_KING && GET_COLOR(squares[sq]) == attacker_color) {
+            return true;
+        }
+    }
+    
+    // Check pawn attacks
+    int pawn_dir = (attacking_color == 0) ? -8 : 8;  // Direction pawns attack FROM
+    int file = pos % 8;
+    
+    if (file > 0) {  // Can be attacked from left
+        int sq = pos + pawn_dir - 1;
+        if (sq >= 0 && sq < 64) {
+            if (GET_PIECE_TYPE(squares[sq]) == PIECE_PAWN && GET_COLOR(squares[sq]) == attacker_color) {
+                return true;
+            }
+        }
+    }
+    if (file < 7) {  // Can be attacked from right
+        int sq = pos + pawn_dir + 1;
+        if (sq >= 0 && sq < 64) {
+            if (GET_PIECE_TYPE(squares[sq]) == PIECE_PAWN && GET_COLOR(squares[sq]) == attacker_color) {
                 return true;
             }
         }
     }
     
-    // Check for king attacks
-    for (int i = 0; i < 8; i++) {
-        int sq = target_pos + QUEEN_DIRECTIONS[i];
-        if (is_valid_king_move(target_pos, sq)) {
-            if (GET_PIECE_TYPE(squares[sq]) == PIECE_KING && GET_COLOR(squares[sq]) == attacker_color) {
-                return true;
-            }
-        }
-    }
-    
-    // Check for rook/queen attacks (straight lines)
-    for (int d = 0; d < 4; d++) {
-        int direction = ROOK_DIRECTIONS[d];
-        int sq = target_pos + direction;
+    // Check sliding pieces (rook/queen on straights, bishop/queen on diagonals)
+    // Directions: N(0), S(1), E(2), W(3), NE(4), NW(5), SE(6), SW(7)
+    for (int dir = 0; dir < 8; dir++) {
+        int offset = DIR_OFFSETS[dir];
+        int dist = squares_to_edge[pos][dir];
+        int sq = pos;
         
-        while (is_valid_square(sq) && !does_wrap(sq - direction, sq, direction)) {
+        for (int d = 0; d < dist; d++) {
+            sq += offset;
             uint8_t piece = squares[sq];
+            
             if (!IS_EMPTY(piece)) {
                 if (GET_COLOR(piece) == attacker_color) {
                     uint8_t type = GET_PIECE_TYPE(piece);
-                    if (type == PIECE_ROOK || type == PIECE_QUEEN) {
-                        return true;
-                    }
+                    if (type == PIECE_QUEEN) return true;
+                    if (dir < 4 && type == PIECE_ROOK) return true;   // Straight
+                    if (dir >= 4 && type == PIECE_BISHOP) return true; // Diagonal
                 }
-                break; // Blocked
+                break;  // Blocked
             }
-            sq += direction;
-        }
-    }
-    
-    // Check for bishop/queen attacks (diagonals)
-    for (int d = 0; d < 4; d++) {
-        int direction = BISHOP_DIRECTIONS[d];
-        int sq = target_pos + direction;
-        
-        while (is_valid_square(sq) && !does_wrap(sq - direction, sq, direction)) {
-            uint8_t piece = squares[sq];
-            if (!IS_EMPTY(piece)) {
-                if (GET_COLOR(piece) == attacker_color) {
-                    uint8_t type = GET_PIECE_TYPE(piece);
-                    if (type == PIECE_BISHOP || type == PIECE_QUEEN) {
-                        return true;
-                    }
-                }
-                break; // Blocked
-            }
-            sq += direction;
         }
     }
     
@@ -438,34 +393,411 @@ bool Board::is_square_attacked(uint8_t pos, uint8_t attacking_color) const {
 }
 
 bool Board::is_king_in_check(uint8_t color) const {
-    uint8_t king_pos = find_king(color);
+    uint8_t king_pos = (color == 0) ? white_king_pos : black_king_pos;
     if (king_pos == 255) return false;
-    
-    uint8_t enemy_color = (color == 0) ? 1 : 0;
-    return is_square_attacked(king_pos, enemy_color);
+    return is_square_attacked_fast(king_pos, 1 - color);
 }
 
+// ==================== FAST MOVE GENERATION ====================
+
+void Board::generate_pawn_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t piece = squares[pos];
+    uint8_t color = GET_COLOR(piece);
+    int direction = (color == COLOR_WHITE) ? 8 : -8;
+    int start_rank = (color == COLOR_WHITE) ? 1 : 6;
+    int promo_rank = (color == COLOR_WHITE) ? 7 : 0;
+    int rank = pos / 8;
+    int file = pos % 8;
+    
+    // Single push
+    int to = pos + direction;
+    if (to >= 0 && to < 64 && IS_EMPTY(squares[to])) {
+        int to_rank = to / 8;
+        if (to_rank == promo_rank) {
+            // Promotion moves - encode promotion piece in flags bits 3-5
+            moves.add(pos, to, (PIECE_QUEEN << 3), 0);
+            moves.add(pos, to, (PIECE_ROOK << 3), 0);
+            moves.add(pos, to, (PIECE_BISHOP << 3), 0);
+            moves.add(pos, to, (PIECE_KNIGHT << 3), 0);
+        } else {
+            moves.add(pos, to);
+        }
+        
+        // Double push
+        if (rank == start_rank) {
+            int to2 = pos + 2 * direction;
+            if (IS_EMPTY(squares[to2])) {
+                moves.add(pos, to2);
+            }
+        }
+    }
+    
+    // Captures
+    int capture_dirs[2] = {direction - 1, direction + 1};
+    for (int i = 0; i < 2; i++) {
+        int to_sq = pos + capture_dirs[i];
+        if (to_sq < 0 || to_sq >= 64) continue;
+        
+        int to_file = to_sq % 8;
+        int file_diff = to_file - file;
+        if (file_diff < -1 || file_diff > 1) continue;  // Wrap check
+        
+        int to_rank = to_sq / 8;
+        
+        // Regular capture
+        if (!IS_EMPTY(squares[to_sq]) && GET_COLOR(squares[to_sq]) != color) {
+            if (to_rank == promo_rank) {
+                moves.add(pos, to_sq, 1 | (PIECE_QUEEN << 3), squares[to_sq]);
+                moves.add(pos, to_sq, 1 | (PIECE_ROOK << 3), squares[to_sq]);
+                moves.add(pos, to_sq, 1 | (PIECE_BISHOP << 3), squares[to_sq]);
+                moves.add(pos, to_sq, 1 | (PIECE_KNIGHT << 3), squares[to_sq]);
+            } else {
+                moves.add(pos, to_sq, 1, squares[to_sq]);
+            }
+        }
+        // En passant
+        else if (to_sq == en_passant_target) {
+            int captured_sq = to_sq - direction;
+            moves.add(pos, to_sq, 2, squares[captured_sq]);  // flag 2 = en passant
+        }
+    }
+}
+
+void Board::generate_knight_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t color = GET_COLOR(squares[pos]);
+    
+    for (int i = 0; i < knight_attack_count[pos]; i++) {
+        uint8_t to = knight_attack_squares[pos][i];
+        uint8_t target = squares[to];
+        
+        if (IS_EMPTY(target)) {
+            moves.add(pos, to);
+        } else if (GET_COLOR(target) != color) {
+            moves.add(pos, to, 1, target);
+        }
+    }
+}
+
+void Board::generate_bishop_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t color = GET_COLOR(squares[pos]);
+    
+    // Diagonal directions: NE(4), NW(5), SE(6), SW(7)
+    for (int dir = 4; dir < 8; dir++) {
+        int offset = DIR_OFFSETS[dir];
+        int dist = squares_to_edge[pos][dir];
+        int sq = pos;
+        
+        for (int d = 0; d < dist; d++) {
+            sq += offset;
+            uint8_t target = squares[sq];
+            
+            if (IS_EMPTY(target)) {
+                moves.add(pos, sq);
+            } else {
+                if (GET_COLOR(target) != color) {
+                    moves.add(pos, sq, 1, target);
+                }
+                break;
+            }
+        }
+    }
+}
+
+void Board::generate_rook_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t color = GET_COLOR(squares[pos]);
+    
+    // Straight directions: N(0), S(1), E(2), W(3)
+    for (int dir = 0; dir < 4; dir++) {
+        int offset = DIR_OFFSETS[dir];
+        int dist = squares_to_edge[pos][dir];
+        int sq = pos;
+        
+        for (int d = 0; d < dist; d++) {
+            sq += offset;
+            uint8_t target = squares[sq];
+            
+            if (IS_EMPTY(target)) {
+                moves.add(pos, sq);
+            } else {
+                if (GET_COLOR(target) != color) {
+                    moves.add(pos, sq, 1, target);
+                }
+                break;
+            }
+        }
+    }
+}
+
+void Board::generate_queen_moves(uint8_t pos, MoveList &moves) const {
+    generate_rook_moves(pos, moves);
+    generate_bishop_moves(pos, moves);
+}
+
+void Board::generate_king_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t color = GET_COLOR(squares[pos]);
+    
+    for (int i = 0; i < king_attack_count[pos]; i++) {
+        uint8_t to = king_attack_squares[pos][i];
+        uint8_t target = squares[to];
+        
+        if (IS_EMPTY(target)) {
+            moves.add(pos, to);
+        } else if (GET_COLOR(target) != color) {
+            moves.add(pos, to, 1, target);
+        }
+    }
+}
+
+void Board::generate_castling_moves(uint8_t pos, MoveList &moves) const {
+    uint8_t color_val = GET_COLOR(squares[pos]);
+    uint8_t color = (color_val == COLOR_WHITE) ? 0 : 1;
+    
+    // Kingside
+    int rights_k = (color == 0) ? 0 : 2;
+    if (castling_rights[rights_k]) {
+        int king_pos = (color == 0) ? 4 : 60;
+        if (pos == king_pos &&
+            IS_EMPTY(squares[king_pos + 1]) && 
+            IS_EMPTY(squares[king_pos + 2]) &&
+            !is_square_attacked_fast(king_pos, 1 - color) &&
+            !is_square_attacked_fast(king_pos + 1, 1 - color) &&
+            !is_square_attacked_fast(king_pos + 2, 1 - color)) {
+            moves.add(pos, pos + 2, 4);  // flag 4 = castling
+        }
+    }
+    
+    // Queenside
+    int rights_q = (color == 0) ? 1 : 3;
+    if (castling_rights[rights_q]) {
+        int king_pos = (color == 0) ? 4 : 60;
+        if (pos == king_pos &&
+            IS_EMPTY(squares[king_pos - 1]) && 
+            IS_EMPTY(squares[king_pos - 2]) &&
+            IS_EMPTY(squares[king_pos - 3]) &&
+            !is_square_attacked_fast(king_pos, 1 - color) &&
+            !is_square_attacked_fast(king_pos - 1, 1 - color) &&
+            !is_square_attacked_fast(king_pos - 2, 1 - color)) {
+            moves.add(pos, pos - 2, 4);  // flag 4 = castling
+        }
+    }
+}
+
+void Board::generate_all_pseudo_legal(MoveList &moves) const {
+    moves.clear();
+    uint8_t target_color = (turn == 0) ? COLOR_WHITE : COLOR_BLACK;
+    
+    for (int sq = 0; sq < 64; sq++) {
+        uint8_t piece = squares[sq];
+        if (IS_EMPTY(piece) || GET_COLOR(piece) != target_color) continue;
+        
+        switch (GET_PIECE_TYPE(piece)) {
+            case PIECE_PAWN:   generate_pawn_moves(sq, moves); break;
+            case PIECE_KNIGHT: generate_knight_moves(sq, moves); break;
+            case PIECE_BISHOP: generate_bishop_moves(sq, moves); break;
+            case PIECE_ROOK:   generate_rook_moves(sq, moves); break;
+            case PIECE_QUEEN:  generate_queen_moves(sq, moves); break;
+            case PIECE_KING:   
+                generate_king_moves(sq, moves); 
+                generate_castling_moves(sq, moves);
+                break;
+        }
+    }
+}
+
+// ==================== FAST MAKE/UNMAKE FOR PERFT ====================
+
+void Board::make_move_fast(const FastMove &m) {
+    uint8_t moving_piece = squares[m.from];
+    uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
+    uint8_t color = GET_COLOR(moving_piece);
+    
+    // Handle en passant capture
+    if (m.flags & 2) {
+        int capture_sq = m.to + ((color == COLOR_WHITE) ? -8 : 8);
+        squares[capture_sq] = 0;
+    }
+    
+    // Handle castling
+    if (m.flags & 4) {
+        int move_dist = (int)m.to - (int)m.from;
+        if (move_dist == 2) {  // Kingside
+            squares[m.from + 1] = squares[m.from + 3];
+            squares[m.from + 3] = 0;
+        } else {  // Queenside
+            squares[m.from - 1] = squares[m.from - 4];
+            squares[m.from - 4] = 0;
+        }
+    }
+    
+    // Move the piece
+    squares[m.to] = moving_piece;
+    squares[m.from] = 0;
+    
+    // Handle promotion
+    uint8_t promo_piece = (m.flags >> 3) & 7;
+    if (promo_piece) {
+        squares[m.to] = MAKE_PIECE(promo_piece, color);
+    }
+    
+    // Update king position
+    if (piece_type == PIECE_KING) {
+        if (color == COLOR_WHITE) white_king_pos = m.to;
+        else black_king_pos = m.to;
+    }
+    
+    // Update en passant target
+    en_passant_target = 255;
+    if (piece_type == PIECE_PAWN) {
+        int move_dist = (int)m.to - (int)m.from;
+        if (move_dist == 16 || move_dist == -16) {
+            en_passant_target = (m.from + m.to) / 2;
+        }
+    }
+    
+    // Update castling rights
+    if (piece_type == PIECE_KING) {
+        if (color == COLOR_WHITE) {
+            castling_rights[0] = false;
+            castling_rights[1] = false;
+        } else {
+            castling_rights[2] = false;
+            castling_rights[3] = false;
+        }
+    }
+    
+    if (m.from == 0 || m.to == 0) castling_rights[1] = false;
+    if (m.from == 7 || m.to == 7) castling_rights[0] = false;
+    if (m.from == 56 || m.to == 56) castling_rights[3] = false;
+    if (m.from == 63 || m.to == 63) castling_rights[2] = false;
+    
+    turn = 1 - turn;
+}
+
+void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling_before[4]) {
+    uint8_t moving_piece = squares[m.to];
+    uint8_t color = GET_COLOR(moving_piece);
+    uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
+    
+    // Handle promotion unmake
+    uint8_t promo_piece = (m.flags >> 3) & 7;
+    if (promo_piece) {
+        moving_piece = MAKE_PIECE(PIECE_PAWN, color);
+        piece_type = PIECE_PAWN;
+    }
+    
+    // Move piece back
+    squares[m.from] = moving_piece;
+    squares[m.to] = (m.flags & 2) ? 0 : m.captured;  // Don't restore captured piece on EP square
+    
+    // Handle en passant unmake
+    if (m.flags & 2) {
+        int capture_sq = m.to + ((color == COLOR_WHITE) ? -8 : 8);
+        squares[capture_sq] = m.captured;
+    }
+    
+    // Handle castling unmake
+    if (m.flags & 4) {
+        int move_dist = (int)m.to - (int)m.from;
+        if (move_dist == 2) {  // Kingside
+            squares[m.from + 3] = squares[m.from + 1];
+            squares[m.from + 1] = 0;
+        } else {  // Queenside
+            squares[m.from - 4] = squares[m.from - 1];
+            squares[m.from - 1] = 0;
+        }
+    }
+    
+    // Restore king position
+    if (piece_type == PIECE_KING || promo_piece) {
+        // If it was originally a king move
+        if (GET_PIECE_TYPE(squares[m.from]) == PIECE_KING) {
+            if (color == COLOR_WHITE) white_king_pos = m.from;
+            else black_king_pos = m.from;
+        }
+    }
+    
+    // Restore castling rights
+    for (int i = 0; i < 4; i++) castling_rights[i] = castling_before[i];
+    
+    // Restore en passant target
+    en_passant_target = ep_before;
+    
+    turn = 1 - turn;
+}
+
+// ==================== PERFT IMPLEMENTATION ====================
+
+uint64_t Board::perft_internal(int depth) {
+    if (depth == 0) return 1;
+    
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint64_t nodes = 0;
+    uint8_t current_color = turn;
+    uint8_t king_pos = (current_color == 0) ? white_king_pos : black_king_pos;
+    
+    // Save state for unmake
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+        
+        make_move_fast(m);
+        
+        // Check if move was legal (didn't leave king in check)
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+            nodes += perft_internal(depth - 1);
+        }
+        
+        unmake_move_fast(m, ep_before, castling_before);
+    }
+    
+    return nodes;
+}
+
+uint64_t Board::count_all_moves(uint8_t depth) {
+    return perft_internal(depth);
+}
+
+// ==================== LEGACY API IMPLEMENTATIONS ====================
+// These are kept for compatibility with the GDScript interface
+
 bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color) {
-    // Make the move temporarily
     uint8_t captured = squares[to];
     uint8_t moving_piece = squares[from];
     
     squares[to] = moving_piece;
     squares[from] = 0;
     
-    // Handle en passant capture
+    // Handle en passant
     uint8_t ep_captured = 0;
     uint8_t ep_capture_sq = 255;
     if (GET_PIECE_TYPE(moving_piece) == PIECE_PAWN && to == en_passant_target) {
-        int direction = (color == 0) ? DIRECTION_S : DIRECTION_N;
+        int direction = (color == 0) ? -8 : 8;
         ep_capture_sq = to + direction;
         ep_captured = squares[ep_capture_sq];
         squares[ep_capture_sq] = 0;
     }
     
+    // Temporarily update king position if needed
+    uint8_t old_king_pos = (color == 0) ? white_king_pos : black_king_pos;
+    if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
+        if (color == 0) white_king_pos = to;
+        else black_king_pos = to;
+    }
+    
     bool in_check = is_king_in_check(color);
     
-    // Restore the board
+    // Restore
+    if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
+        if (color == 0) white_king_pos = old_king_pos;
+        else black_king_pos = old_king_pos;
+    }
+    
     squares[from] = moving_piece;
     squares[to] = captured;
     if (ep_capture_sq != 255) {
@@ -478,119 +810,102 @@ bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color
 void Board::add_pawn_moves(uint8_t pos, Array &moves) const {
     uint8_t piece = squares[pos];
     uint8_t color = GET_COLOR(piece);
-    int direction = (color == COLOR_WHITE) ? DIRECTION_N : DIRECTION_S;
+    int direction = (color == COLOR_WHITE) ? 8 : -8;
     int start_rank = (color == COLOR_WHITE) ? 1 : 6;
     int rank = pos / 8;
+    int file = pos % 8;
     
-    // Single push
     int to = pos + direction;
-    if (is_valid_square(to) && IS_EMPTY(squares[to])) {
+    if (to >= 0 && to < 64 && IS_EMPTY(squares[to])) {
         moves.append(to);
         
-        // Double push from starting position
         if (rank == start_rank) {
             int to2 = pos + 2 * direction;
-            if (is_valid_square(to2) && IS_EMPTY(squares[to2])) {
+            if (IS_EMPTY(squares[to2])) {
                 moves.append(to2);
             }
         }
     }
     
-    // Captures (including en passant)
-    int capture_offsets[2] = { direction + DIRECTION_W, direction + DIRECTION_E };
-    
+    int capture_dirs[2] = {direction - 1, direction + 1};
     for (int i = 0; i < 2; i++) {
-        int capture_to = pos + capture_offsets[i];
+        int to_sq = pos + capture_dirs[i];
+        if (to_sq < 0 || to_sq >= 64) continue;
         
-        if (!is_valid_square(capture_to)) continue;
+        int to_file = to_sq % 8;
+        int file_diff = to_file - file;
+        if (file_diff < -1 || file_diff > 1) continue;
         
-        // Check for wrapping
-        int from_file = pos % 8;
-        int to_file = capture_to % 8;
-        int file_diff = from_file - to_file;
-        if (file_diff < 0) file_diff = -file_diff;
-        if (file_diff != 1) continue; // Wrapped around
-        
-        uint8_t target = squares[capture_to];
-        
-        // Regular capture
+        uint8_t target = squares[to_sq];
         if (!IS_EMPTY(target) && GET_COLOR(target) != color) {
-            moves.append(capture_to);
+            moves.append(to_sq);
         }
-        // En passant
-        else if (capture_to == en_passant_target) {
-            moves.append(capture_to);
+        else if (to_sq == en_passant_target) {
+            moves.append(to_sq);
         }
     }
 }
 
 void Board::add_knight_moves(uint8_t pos, Array &moves) const {
-    uint8_t piece = squares[pos];
-    uint8_t color = GET_COLOR(piece);
+    uint8_t color = GET_COLOR(squares[pos]);
     
-    for (int i = 0; i < 8; i++) {
-        int to = pos + KNIGHT_OFFSETS[i];
-        
-        if (!is_valid_knight_move(pos, to)) continue;
-        
+    for (int i = 0; i < knight_attack_count[pos]; i++) {
+        uint8_t to = knight_attack_squares[pos][i];
         uint8_t target = squares[to];
         if (IS_EMPTY(target) || GET_COLOR(target) != color) {
-            moves.append(to);
+            moves.append((int)to);
         }
     }
 }
 
 void Board::add_sliding_moves(uint8_t pos, Array &moves, const int directions[][2], int num_directions) const {
-    // This method is not used directly - we use specialized methods
-    // Keeping for interface compatibility
+    // Not used
 }
 
 void Board::add_bishop_moves(uint8_t pos, Array &moves) const {
-    uint8_t piece = squares[pos];
-    uint8_t color = GET_COLOR(piece);
+    uint8_t color = GET_COLOR(squares[pos]);
     
-    for (int d = 0; d < 4; d++) {
-        int direction = BISHOP_DIRECTIONS[d];
-        int to = pos + direction;
+    for (int dir = 4; dir < 8; dir++) {
+        int offset = DIR_OFFSETS[dir];
+        int dist = squares_to_edge[pos][dir];
+        int sq = pos;
         
-        while (is_valid_square(to) && !does_wrap(to - direction, to, direction)) {
-            uint8_t target = squares[to];
+        for (int d = 0; d < dist; d++) {
+            sq += offset;
+            uint8_t target = squares[sq];
             
             if (IS_EMPTY(target)) {
-                moves.append(to);
+                moves.append(sq);
             } else {
                 if (GET_COLOR(target) != color) {
-                    moves.append(to);
+                    moves.append(sq);
                 }
                 break;
             }
-            
-            to += direction;
         }
     }
 }
 
 void Board::add_rook_moves(uint8_t pos, Array &moves) const {
-    uint8_t piece = squares[pos];
-    uint8_t color = GET_COLOR(piece);
+    uint8_t color = GET_COLOR(squares[pos]);
     
-    for (int d = 0; d < 4; d++) {
-        int direction = ROOK_DIRECTIONS[d];
-        int to = pos + direction;
+    for (int dir = 0; dir < 4; dir++) {
+        int offset = DIR_OFFSETS[dir];
+        int dist = squares_to_edge[pos][dir];
+        int sq = pos;
         
-        while (is_valid_square(to) && !does_wrap(to - direction, to, direction)) {
-            uint8_t target = squares[to];
+        for (int d = 0; d < dist; d++) {
+            sq += offset;
+            uint8_t target = squares[sq];
             
             if (IS_EMPTY(target)) {
-                moves.append(to);
+                moves.append(sq);
             } else {
                 if (GET_COLOR(target) != color) {
-                    moves.append(to);
+                    moves.append(sq);
                 }
                 break;
             }
-            
-            to += direction;
         }
     }
 }
@@ -601,17 +916,13 @@ void Board::add_queen_moves(uint8_t pos, Array &moves) const {
 }
 
 void Board::add_king_moves(uint8_t pos, Array &moves) const {
-    uint8_t piece = squares[pos];
-    uint8_t color = GET_COLOR(piece);
+    uint8_t color = GET_COLOR(squares[pos]);
     
-    for (int d = 0; d < 8; d++) {
-        int to = pos + QUEEN_DIRECTIONS[d];
-        
-        if (!is_valid_king_move(pos, to)) continue;
-        
+    for (int i = 0; i < king_attack_count[pos]; i++) {
+        uint8_t to = king_attack_squares[pos][i];
         uint8_t target = squares[to];
         if (IS_EMPTY(target) || GET_COLOR(target) != color) {
-            moves.append(to);
+            moves.append((int)to);
         }
     }
 }
@@ -621,18 +932,14 @@ bool Board::can_castle_kingside(uint8_t color) const {
     if (!castling_rights[rights_idx]) return false;
     
     int king_pos = (color == 0) ? 4 : 60;
-    int rook_pos = (color == 0) ? 7 : 63;
     
-    // Check squares between are empty
     if (!IS_EMPTY(squares[king_pos + 1]) || !IS_EMPTY(squares[king_pos + 2])) {
         return false;
     }
     
-    // Check king and squares it passes through are not attacked
-    uint8_t enemy_color = (color == 0) ? 1 : 0;
-    if (is_square_attacked(king_pos, enemy_color)) return false;
-    if (is_square_attacked(king_pos + 1, enemy_color)) return false;
-    if (is_square_attacked(king_pos + 2, enemy_color)) return false;
+    if (is_square_attacked_fast(king_pos, 1 - color)) return false;
+    if (is_square_attacked_fast(king_pos + 1, 1 - color)) return false;
+    if (is_square_attacked_fast(king_pos + 2, 1 - color)) return false;
     
     return true;
 }
@@ -643,23 +950,19 @@ bool Board::can_castle_queenside(uint8_t color) const {
     
     int king_pos = (color == 0) ? 4 : 60;
     
-    // Check squares between are empty
     if (!IS_EMPTY(squares[king_pos - 1]) || !IS_EMPTY(squares[king_pos - 2]) || !IS_EMPTY(squares[king_pos - 3])) {
         return false;
     }
     
-    // Check king and squares it passes through are not attacked
-    uint8_t enemy_color = (color == 0) ? 1 : 0;
-    if (is_square_attacked(king_pos, enemy_color)) return false;
-    if (is_square_attacked(king_pos - 1, enemy_color)) return false;
-    if (is_square_attacked(king_pos - 2, enemy_color)) return false;
+    if (is_square_attacked_fast(king_pos, 1 - color)) return false;
+    if (is_square_attacked_fast(king_pos - 1, 1 - color)) return false;
+    if (is_square_attacked_fast(king_pos - 2, 1 - color)) return false;
     
     return true;
 }
 
 void Board::add_castling_moves(uint8_t pos, Array &moves) const {
-    uint8_t piece = squares[pos];
-    uint8_t color_val = GET_COLOR(piece);
+    uint8_t color_val = GET_COLOR(squares[pos]);
     uint8_t color = (color_val == COLOR_WHITE) ? 0 : 1;
     
     if (can_castle_kingside(color)) {
@@ -678,26 +981,14 @@ Array Board::get_pseudo_legal_moves_for_piece(uint8_t pos) const {
     uint8_t piece = squares[pos];
     if (IS_EMPTY(piece)) return moves;
     
-    uint8_t piece_type = GET_PIECE_TYPE(piece);
-    
-    switch (piece_type) {
-        case PIECE_PAWN:
-            add_pawn_moves(pos, moves);
-            break;
-        case PIECE_KNIGHT:
-            add_knight_moves(pos, moves);
-            break;
-        case PIECE_BISHOP:
-            add_bishop_moves(pos, moves);
-            break;
-        case PIECE_ROOK:
-            add_rook_moves(pos, moves);
-            break;
-        case PIECE_QUEEN:
-            add_queen_moves(pos, moves);
-            break;
-        case PIECE_KING:
-            add_king_moves(pos, moves);
+    switch (GET_PIECE_TYPE(piece)) {
+        case PIECE_PAWN:   add_pawn_moves(pos, moves); break;
+        case PIECE_KNIGHT: add_knight_moves(pos, moves); break;
+        case PIECE_BISHOP: add_bishop_moves(pos, moves); break;
+        case PIECE_ROOK:   add_rook_moves(pos, moves); break;
+        case PIECE_QUEEN:  add_queen_moves(pos, moves); break;
+        case PIECE_KING:   
+            add_king_moves(pos, moves); 
             add_castling_moves(pos, moves);
             break;
     }
@@ -710,7 +1001,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
     uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
     uint8_t color = GET_COLOR(moving_piece);
     
-    // Record move info
     move_record.from = from;
     move_record.to = to;
     move_record.captured_piece = squares[to];
@@ -723,38 +1013,38 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         move_record.castling_rights_before[i] = castling_rights[i];
     }
     
-    // Handle en passant capture
     if (piece_type == PIECE_PAWN && to == en_passant_target) {
         move_record.is_en_passant = true;
-        int capture_sq = to + ((color == COLOR_WHITE) ? DIRECTION_S : DIRECTION_N);
+        int capture_sq = to + ((color == COLOR_WHITE) ? -8 : 8);
         move_record.captured_piece = squares[capture_sq];
         squares[capture_sq] = 0;
     }
     
-    // Handle castling
     if (piece_type == PIECE_KING) {
         int move_dist = (int)to - (int)from;
         
-        if (move_dist == 2) { // Kingside castling
+        if (move_dist == 2) {
             move_record.is_castling = true;
-            // Move rook
             uint8_t rook = squares[from + 3];
             squares[from + 3] = 0;
             squares[from + 1] = rook;
-        } else if (move_dist == -2) { // Queenside castling
+        } else if (move_dist == -2) {
             move_record.is_castling = true;
-            // Move rook
             uint8_t rook = squares[from - 4];
             squares[from - 4] = 0;
             squares[from - 1] = rook;
         }
     }
     
-    // Move the piece
     squares[to] = moving_piece;
     squares[from] = 0;
     
-    // Update en passant target
+    // Update king cache
+    if (piece_type == PIECE_KING) {
+        if (color == COLOR_WHITE) white_king_pos = to;
+        else black_king_pos = to;
+    }
+    
     en_passant_target = 255;
     if (piece_type == PIECE_PAWN) {
         int move_dist = (int)to - (int)from;
@@ -763,8 +1053,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         }
     }
     
-    // Update castling rights
-    // If king moves
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) {
             castling_rights[0] = false;
@@ -775,25 +1063,21 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         }
     }
     
-    // If rook moves or is captured
-    if (from == 0 || to == 0) castling_rights[1] = false;   // a1
-    if (from == 7 || to == 7) castling_rights[0] = false;   // h1
-    if (from == 56 || to == 56) castling_rights[3] = false; // a8
-    if (from == 63 || to == 63) castling_rights[2] = false; // h8
+    if (from == 0 || to == 0) castling_rights[1] = false;
+    if (from == 7 || to == 7) castling_rights[0] = false;
+    if (from == 56 || to == 56) castling_rights[3] = false;
+    if (from == 63 || to == 63) castling_rights[2] = false;
     
-    // Update halfmove clock
     if (piece_type == PIECE_PAWN || move_record.captured_piece != 0) {
         halfmove_clock = 0;
     } else {
         halfmove_clock++;
     }
     
-    // Update fullmove number (after black's move)
     if (color == COLOR_BLACK) {
         fullmove_number++;
     }
     
-    // Switch turn
     turn = 1 - turn;
 }
 
@@ -802,51 +1086,47 @@ void Board::revert_move_internal(const Move &move) {
     uint8_t color = GET_COLOR(moving_piece);
     uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
     
-    // Handle promotion unmake
     if (move.promotion_piece != 0) {
         moving_piece = MAKE_PIECE(PIECE_PAWN, color);
     }
     
-    // Move piece back
     squares[move.from] = moving_piece;
     squares[move.to] = move.captured_piece;
     
-    // Handle en passant unmake
     if (move.is_en_passant) {
-        squares[move.to] = 0; // The captured piece wasn't on 'to'
-        int capture_sq = move.to + ((color == COLOR_WHITE) ? DIRECTION_S : DIRECTION_N);
+        squares[move.to] = 0;
+        int capture_sq = move.to + ((color == COLOR_WHITE) ? -8 : 8);
         squares[capture_sq] = move.captured_piece;
     }
     
-    // Handle castling unmake
     if (move.is_castling) {
         int move_dist = (int)move.to - (int)move.from;
-        if (move_dist == 2) { // Kingside
+        if (move_dist == 2) {
             uint8_t rook = squares[move.from + 1];
             squares[move.from + 1] = 0;
             squares[move.from + 3] = rook;
-        } else { // Queenside
+        } else {
             uint8_t rook = squares[move.from - 1];
             squares[move.from - 1] = 0;
             squares[move.from - 4] = rook;
         }
     }
     
-    // Restore castling rights
+    // Update king cache
+    if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
+        if (color == COLOR_WHITE) white_king_pos = move.from;
+        else black_king_pos = move.from;
+    }
+    
     for (int i = 0; i < 4; i++) {
         castling_rights[i] = move.castling_rights_before[i];
     }
     
-    // Restore en passant target
     en_passant_target = move.en_passant_target_before;
-    
-    // Restore halfmove clock
     halfmove_clock = move.halfmove_clock_before;
     
-    // Switch turn back
     turn = 1 - turn;
     
-    // Restore fullmove number
     if (color == COLOR_BLACK) {
         fullmove_number--;
     }
@@ -854,7 +1134,6 @@ void Board::revert_move_internal(const Move &move) {
 
 String Board::move_to_notation(const Move &move) const {
     String notation = "";
-    
     notation += square_to_algebraic(move.from);
     notation += square_to_algebraic(move.to);
     
@@ -870,11 +1149,9 @@ String Board::move_to_notation(const Move &move) const {
     return notation;
 }
 
-// Public API implementations
+// ==================== PUBLIC API ====================
 
-uint8_t Board::get_turn() const {
-    return turn;
-}
+uint8_t Board::get_turn() const { return turn; }
 
 uint8_t Board::get_piece_on_square(uint8_t pos) const {
     if (pos >= 64) return 0;
@@ -884,6 +1161,10 @@ uint8_t Board::get_piece_on_square(uint8_t pos) const {
 void Board::set_piece_on_square(uint8_t pos, uint8_t piece) {
     if (pos < 64) {
         squares[pos] = piece;
+        if (GET_PIECE_TYPE(piece) == PIECE_KING) {
+            if (IS_WHITE(piece)) white_king_pos = pos;
+            else if (IS_BLACK(piece)) black_king_pos = pos;
+        }
     }
 }
 
@@ -905,11 +1186,9 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
     uint8_t piece = squares[start];
     if (IS_EMPTY(piece)) return 0;
     
-    // Check it's the right player's turn
     uint8_t piece_color = (GET_COLOR(piece) == COLOR_WHITE) ? 0 : 1;
     if (piece_color != turn) return 0;
     
-    // Get legal moves for this piece
     Array legal_moves = get_legal_moves_for_piece(start);
     
     bool is_legal = false;
@@ -922,32 +1201,29 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
     
     if (!is_legal) return 0;
     
-    // Check if this is a pawn promotion
     uint8_t piece_type = GET_PIECE_TYPE(piece);
     int end_rank = end / 8;
     
     if (piece_type == PIECE_PAWN && (end_rank == 0 || end_rank == 7)) {
-        // Promotion pending
         promotion_pending = true;
         promotion_pending_from = start;
         promotion_pending_to = end;
-        return 2; // Promotion pending
+        return 2;
     }
     
-    // Make the move
     Move move_record;
     make_move_internal(start, end, move_record);
     
     move_history.push_back(move_record);
     move_history_notation.push_back(move_to_notation(move_record));
     
-    return 1; // Success
+    return 1;
 }
 
 void Board::commit_promotion(const String &type_str) {
     if (!promotion_pending) return;
     
-    uint8_t promotion_type = PIECE_QUEEN; // Default
+    uint8_t promotion_type = PIECE_QUEEN;
     
     if (type_str.length() > 0) {
         char32_t c = type_str.to_lower()[0];
@@ -962,11 +1238,9 @@ void Board::commit_promotion(const String &type_str) {
     uint8_t piece = squares[promotion_pending_from];
     uint8_t color = GET_COLOR(piece);
     
-    // Make the move
     Move move_record;
     make_move_internal(promotion_pending_from, promotion_pending_to, move_record);
     
-    // Apply promotion
     squares[promotion_pending_to] = MAKE_PIECE(promotion_type, color);
     move_record.promotion_piece = squares[promotion_pending_to];
     
@@ -1038,83 +1312,18 @@ Array Board::get_legal_moves_for_piece(uint8_t square) {
     return legal_moves;
 }
 
-uint32_t Board::count_all_moves(uint8_t depth) {
-    // Base case: at depth 0, count this position as 1
-    if (depth == 0) {
-        return 1;
-    }
-    
-    uint32_t count = 0;
-    uint8_t current_color = turn;
-    uint8_t target_color = (current_color == 0) ? COLOR_WHITE : COLOR_BLACK;
-    
-    // Iterate over all squares to find pieces of the current player
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece) || GET_COLOR(piece) != target_color) {
-            continue;
-        }
-        
-        // Get legal moves for this piece
-        Array legal_moves = get_legal_moves_for_piece(sq);
-        uint8_t piece_type = GET_PIECE_TYPE(piece);
-        
-        for (int i = 0; i < legal_moves.size(); i++) {
-            uint8_t to = (int)legal_moves[i];
-            int to_rank = to / 8;
-            
-            // Check if this is a pawn promotion
-            bool is_promotion = (piece_type == PIECE_PAWN && (to_rank == 0 || to_rank == 7));
-            
-            if (is_promotion) {
-                // Promotions count as 4 separate moves (Q, R, B, N)
-                uint8_t promotion_pieces[4] = { PIECE_QUEEN, PIECE_ROOK, PIECE_BISHOP, PIECE_KNIGHT };
-                
-                for (int p = 0; p < 4; p++) {
-                    Move move_record;
-                    make_move_internal(sq, to, move_record);
-                    
-                    // Apply promotion
-                    squares[to] = MAKE_PIECE(promotion_pieces[p], target_color);
-                    move_record.promotion_piece = squares[to];
-                    
-                    // Recurse
-                    count += count_all_moves(depth - 1);
-                    
-                    // Revert
-                    revert_move_internal(move_record);
-                }
-            } else {
-                // Normal move
-                Move move_record;
-                make_move_internal(sq, to, move_record);
-                
-                // Recurse
-                count += count_all_moves(depth - 1);
-                
-                // Revert
-                revert_move_internal(move_record);
-            }
-        }
-    }
-    
-    return count;
-}
-
 void Board::make_move(uint8_t start, uint8_t end) {
     if (start >= 64 || end >= 64) return;
     
     uint8_t piece = squares[start];
     if (IS_EMPTY(piece)) return;
     
-    // Check for promotion
     uint8_t piece_type = GET_PIECE_TYPE(piece);
     int end_rank = end / 8;
     
     Move move_record;
     make_move_internal(start, end, move_record);
     
-    // Auto-promote to queen if needed
     if (piece_type == PIECE_PAWN && (end_rank == 0 || end_rank == 7)) {
         uint8_t color = GET_COLOR(piece);
         squares[end] = MAKE_PIECE(PIECE_QUEEN, color);
@@ -1127,16 +1336,12 @@ void Board::make_move(uint8_t start, uint8_t end) {
 
 bool Board::is_checkmate(uint8_t color) {
     if (!is_king_in_check(color)) return false;
-    
-    // Check if any legal move exists
     Array all_moves = get_all_possible_moves(color);
     return all_moves.size() == 0;
 }
 
 bool Board::is_stalemate(uint8_t color) {
     if (is_king_in_check(color)) return false;
-    
-    // Check if any legal move exists
     Array all_moves = get_all_possible_moves(color);
     return all_moves.size() == 0;
 }
@@ -1146,31 +1351,22 @@ bool Board::is_check(uint8_t color) const {
 }
 
 bool Board::is_game_over() {
-    // Check for checkmate or stalemate
     if (is_checkmate(turn) || is_stalemate(turn)) return true;
-    
-    // 50-move rule
     if (halfmove_clock >= 100) return true;
-    
-    // TODO: Add threefold repetition detection
-    // TODO: Add insufficient material detection
-    
     return false;
 }
 
 int Board::get_game_result() {
-    if (is_checkmate(0)) return 2; // Black wins
-    if (is_checkmate(1)) return 1; // White wins
-    
-    if (is_stalemate(turn)) return 3; // Draw
-    if (halfmove_clock >= 100) return 3; // Draw by 50-move rule
-    
-    return 0; // Game ongoing
+    if (is_checkmate(0)) return 2;
+    if (is_checkmate(1)) return 1;
+    if (is_stalemate(turn)) return 3;
+    if (halfmove_clock >= 100) return 3;
+    return 0;
 }
 
 Vector2i Board::pos_to_coords(uint8_t pos) const {
     if (pos >= 64) return Vector2i(-1, -1);
-    return Vector2i(pos / 8, pos % 8); // (rank, file)
+    return Vector2i(pos / 8, pos % 8);
 }
 
 uint8_t Board::coords_to_pos(int rank, int file) const {

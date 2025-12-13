@@ -22,8 +22,8 @@ const PIECE_TYPE_MASK = 7   # 0b00111
 const COLOR_MASK = 24       # 0b11000
 
 # PERFT CONFIGURATION: Set the maximum depth for move counting
-# Warning: Higher depths (5+) can take significant time
-@export var perft_max_depth: int = 4
+# Warning: Higher depths (6+) can take significant time
+@export var perft_max_depth: int = 5
 
 var board: Board
 var sprites = {} # Map<Vector2i, Sprite2D>
@@ -72,7 +72,7 @@ func _ready():
 	add_child(board)
 	
 	setup_ui()
-	board.setup_board("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8") # Empty string = starting position
+	board.setup_board("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8")
 	fen_history.append(board.get_fen()) # Store initial position
 	refresh_visuals()
 	
@@ -180,9 +180,8 @@ func _input(event):
 						update_last_move_visuals(move_start, move_end)
 						deselect_piece()
 						refresh_visuals()
-						# record_and_print_fen()  # Commented out as requested
-						record_fen()  # Still record it in history
-						print_perft_analysis()  # Print perft instead
+						record_fen()
+						print_perft_analysis()
 						check_game_over()
 					elif result == 2:
 						# Move leads to promotion: remember for later highlight and open UI.
@@ -311,9 +310,8 @@ func _on_promotion_selected(type):
 	
 	deselect_piece()
 	refresh_visuals()
-	# record_and_print_fen()  # Commented out as requested
-	record_fen()  # Still record it in history
-	print_perft_analysis()  # Print perft instead
+	record_fen()
+	print_perft_analysis()
 	check_game_over()
 
 # Revert the last move (called on left arrow key)
@@ -363,34 +361,68 @@ func parse_uci_move(uci: String) -> Array:
 	
 	return [start_grid, end_grid]
 
-# Record current FEN without printing (FEN printing commented out)
+# Record current FEN without printing
 func record_fen():
 	var fen = board.get_fen()
 	fen_history.append(fen)
 
-# Record current FEN and print it (original function, now commented out in usage)
+# Record current FEN and print it
 func record_and_print_fen():
 	var fen = board.get_fen()
 	fen_history.append(fen)
 	print("Move %d: %s" % [fen_history.size() - 1, fen])
 
+# Format large numbers with commas for readability
+func format_number(n: int) -> String:
+	var s = str(n)
+	var result = ""
+	var count = 0
+	for i in range(s.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0:
+			result = "," + result
+		result = s[i] + result
+		count += 1
+	return result
+
 # Print perft analysis for the current position
 func print_perft_analysis():
-	print("\n" + "=".repeat(60))
+	print("\n" + "=".repeat(70))
 	print("PERFT Analysis - Move %d" % [fen_history.size() - 1])
 	print("Position: %s" % board.get_fen())
 	print("To move: %s" % ("White" if board.get_turn() == 0 else "Black"))
-	print("-".repeat(60))
+	print("-".repeat(70))
+	print("%-8s %18s %12s %15s" % ["Depth", "Nodes", "Time (ms)", "Nodes/sec"])
+	print("-".repeat(70))
+	
+	var total_time = 0
+	var total_nodes = 0
 	
 	for depth in range(1, perft_max_depth + 1):
-		var start_time = Time.get_ticks_msec()
+		var start_time = Time.get_ticks_usec()
 		var count = board.count_all_moves(depth)
-		var end_time = Time.get_ticks_msec()
-		var elapsed = end_time - start_time
+		var end_time = Time.get_ticks_usec()
+		var elapsed_us = end_time - start_time
+		var elapsed_ms = elapsed_us / 1000.0
 		
-		print("Depth %d: %d nodes (Time: %d ms)" % [depth, count, elapsed])
+		total_time += elapsed_us
+		total_nodes += count
+		
+		var nps = 0
+		if elapsed_us > 0:
+			nps = int(count * 1000000.0 / elapsed_us)
+		
+		print("%-8d %18s %12.1f %15s" % [depth, format_number(count), elapsed_ms, format_number(nps)])
 	
-	print("=".repeat(60) + "\n")
+	print("-".repeat(70))
+	var total_nps = 0
+	if total_time > 0:
+		total_nps = int(total_nodes * 1000000.0 / total_time)
+	print("Total: %s nodes in %.1f ms (%s nodes/sec)" % [
+		format_number(total_nodes), 
+		total_time / 1000.0,
+		format_number(total_nps)
+	])
+	print("=".repeat(70) + "\n")
 
 # Check if game has ended and print result
 func check_game_over():
