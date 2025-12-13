@@ -23,8 +23,7 @@ const COLOR_MASK = 24       # 0b11000
 
 # PERFT CONFIGURATION: Set the maximum depth for move counting
 # Warning: Higher depths (5+) can take significant time
-# Depth 1 = ~20 moves, Depth 2 = ~400, Depth 3 = ~8900, Depth 4 = ~197000
-@export var perft_max_depth: int = 5
+@export var perft_max_depth: int = 4
 
 var board: Board
 var sprites = {} # Map<Vector2i, Sprite2D>
@@ -73,7 +72,7 @@ func _ready():
 	add_child(board)
 	
 	setup_ui()
-	board.setup_board("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1") # Empty string = starting position
+	board.setup_board("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8") # Empty string = starting position
 	fen_history.append(board.get_fen()) # Store initial position
 	refresh_visuals()
 	
