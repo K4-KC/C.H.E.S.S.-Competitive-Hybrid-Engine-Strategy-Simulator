@@ -117,6 +117,7 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_moves"), &Board::get_moves);
     ClassDB::bind_method(D_METHOD("get_all_possible_moves", "color"), &Board::get_all_possible_moves);
     ClassDB::bind_method(D_METHOD("get_legal_moves_for_piece", "square"), &Board::get_legal_moves_for_piece);
+    ClassDB::bind_method(D_METHOD("count_all_moves", "depth"), &Board::count_all_moves);
     ClassDB::bind_method(D_METHOD("make_move", "start", "end"), &Board::make_move);
     ClassDB::bind_method(D_METHOD("is_checkmate", "color"), &Board::is_checkmate);
     ClassDB::bind_method(D_METHOD("is_stalemate", "color"), &Board::is_stalemate);
@@ -796,7 +797,7 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
     turn = 1 - turn;
 }
 
-void Board::unmake_move_internal(const Move &move) {
+void Board::revert_move_internal(const Move &move) {
     uint8_t moving_piece = squares[move.to];
     uint8_t color = GET_COLOR(moving_piece);
     uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
@@ -982,7 +983,7 @@ void Board::revert_move() {
     move_history.pop_back();
     move_history_notation.pop_back();
     
-    unmake_move_internal(last_move);
+    revert_move_internal(last_move);
 }
 
 Array Board::get_moves() const {
@@ -1035,6 +1036,69 @@ Array Board::get_legal_moves_for_piece(uint8_t square) {
     }
     
     return legal_moves;
+}
+
+uint32_t Board::count_all_moves(uint8_t depth) {
+    // Base case: at depth 0, count this position as 1
+    if (depth == 0) {
+        return 1;
+    }
+    
+    uint32_t count = 0;
+    uint8_t current_color = turn;
+    uint8_t target_color = (current_color == 0) ? COLOR_WHITE : COLOR_BLACK;
+    
+    // Iterate over all squares to find pieces of the current player
+    for (int sq = 0; sq < 64; sq++) {
+        uint8_t piece = squares[sq];
+        if (IS_EMPTY(piece) || GET_COLOR(piece) != target_color) {
+            continue;
+        }
+        
+        // Get legal moves for this piece
+        Array legal_moves = get_legal_moves_for_piece(sq);
+        uint8_t piece_type = GET_PIECE_TYPE(piece);
+        
+        for (int i = 0; i < legal_moves.size(); i++) {
+            uint8_t to = (int)legal_moves[i];
+            int to_rank = to / 8;
+            
+            // Check if this is a pawn promotion
+            bool is_promotion = (piece_type == PIECE_PAWN && (to_rank == 0 || to_rank == 7));
+            
+            if (is_promotion) {
+                // Promotions count as 4 separate moves (Q, R, B, N)
+                uint8_t promotion_pieces[4] = { PIECE_QUEEN, PIECE_ROOK, PIECE_BISHOP, PIECE_KNIGHT };
+                
+                for (int p = 0; p < 4; p++) {
+                    Move move_record;
+                    make_move_internal(sq, to, move_record);
+                    
+                    // Apply promotion
+                    squares[to] = MAKE_PIECE(promotion_pieces[p], target_color);
+                    move_record.promotion_piece = squares[to];
+                    
+                    // Recurse
+                    count += count_all_moves(depth - 1);
+                    
+                    // Revert
+                    revert_move_internal(move_record);
+                }
+            } else {
+                // Normal move
+                Move move_record;
+                make_move_internal(sq, to, move_record);
+                
+                // Recurse
+                count += count_all_moves(depth - 1);
+                
+                // Revert
+                revert_move_internal(move_record);
+            }
+        }
+    }
+    
+    return count;
 }
 
 void Board::make_move(uint8_t start, uint8_t end) {

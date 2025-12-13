@@ -108,7 +108,7 @@ private:
     
     // Move execution
     void make_move_internal(uint8_t from, uint8_t to, Move &move_record);
-    void unmake_move_internal(const Move &move);
+    void revert_move_internal(const Move &move);
     
     // Castling helpers
     bool can_castle_kingside(uint8_t color) const;
@@ -145,6 +145,7 @@ public:
     // AI/Analysis functions
     Array get_all_possible_moves(uint8_t color); // Returns array of {from, to} dictionaries
     Array get_legal_moves_for_piece(uint8_t square); // Returns array of target squares
+    uint32_t count_all_moves(uint8_t depth); // Count of all legal moves for color at a depth
     void make_move(uint8_t start, uint8_t end); // Direct move without validation (for AI)
     
     // Game state queries
