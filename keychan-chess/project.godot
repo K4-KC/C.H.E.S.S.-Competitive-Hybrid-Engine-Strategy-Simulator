@@ -22,6 +22,10 @@ window/size/viewport_height=512
 window/size/resizable=false
 window/stretch/scale=4.0
 
+[gui]
+
+fonts/dynamic_fonts/use_oversampling=false
+
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0

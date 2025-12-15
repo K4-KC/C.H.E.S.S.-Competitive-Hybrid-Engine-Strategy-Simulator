@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3 uid="uid://b33qg1yf5x17n"]
+
+[ext_resource type="Script" uid="uid://drrk27ddkyud8" path="res://scenes/player_vs_player.gd" id="1_urtwi"]
+[ext_resource type="Texture2D" uid="uid://cwijpkc67py3m" path="res://assets/textures/backgrounds/board0.png" id="2_pstoo"]
+
+[node name="PlayerVsPlayer" type="Node2D"]
+script = ExtResource("1_urtwi")
+
+[node name="Board0" type="Sprite2D" parent="."]
+position = Vector2(64, 64)
+texture = ExtResource("2_pstoo")

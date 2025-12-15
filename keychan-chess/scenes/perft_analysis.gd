@@ -1,0 +1,367 @@
+extends Node2D
+
+const TILE_SIZE = 16
+const BOARD_OFFSET = Vector2(8, 8)
+
+const PIECE_NONE = 0
+const PIECE_PAWN = 1
+const PIECE_KNIGHT = 2
+const PIECE_BISHOP = 3
+const PIECE_ROOK = 4
+const PIECE_QUEEN = 5
+const PIECE_KING = 6
+
+const COLOR_WHITE = 8
+const COLOR_BLACK = 16
+
+const PIECE_TYPE_MASK = 7
+const COLOR_MASK = 24
+
+# --- PERFT CONFIGURATION ---
+# Higher depths will result in significantly longer processing times per move
+@export var perft_max_depth: int = 4 
+
+var board: Board
+var sprites = {} 
+var selected_pos = null 
+var highlight_sprites = []
+var last_move_sprites = []
+
+var tex_move = preload("res://assets/sprites/highlights/move.png")
+var tex_capture = preload("res://assets/sprites/highlights/capture.png")
+var tex_moving = preload("res://assets/sprites/highlights/moving.png")
+var tex_moved = preload("res://assets/sprites/highlights/moved.png")
+
+var textures = {
+	0: { "p": preload("res://assets/sprites/pieces/p0.png"), "r": preload("res://assets/sprites/pieces/r0.png"), "n": preload("res://assets/sprites/pieces/n0.png"), 
+		 "b": preload("res://assets/sprites/pieces/b0.png"), "q": preload("res://assets/sprites/pieces/q0.png"), "k": preload("res://assets/sprites/pieces/k0.png") },
+	1: { "p": preload("res://assets/sprites/pieces/p1.png"), "r": preload("res://assets/sprites/pieces/r1.png"), "n": preload("res://assets/sprites/pieces/n1.png"), 
+		 "b": preload("res://assets/sprites/pieces/b1.png"), "q": preload("res://assets/sprites/pieces/q1.png"), "k": preload("res://assets/sprites/pieces/k1.png") }
+}
+
+var promotion_panel = null
+var promotion_buttons = {} 
+var is_promoting = false
+var pending_promotion_move_start = null 
+var pending_promotion_move_end = null
+var fen_history = []
+
+func _ready():
+	var hl_node = Node2D.new()
+	hl_node.name = "Highlights"
+	add_child(hl_node)
+	
+	var pieces_node = Node2D.new()
+	pieces_node.name = "Pieces"
+	add_child(pieces_node)
+
+	board = Board.new()
+	add_child(board)
+	
+	setup_ui()
+
+	# Default to standard start if no FEN was passed
+	var start_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+	
+	# Check if the Main Menu passed us a FEN string
+	if get_tree().root.has_meta("start_fen"):
+		start_fen = get_tree().root.get_meta("start_fen")
+	
+	board.setup_board(start_fen)
+	fen_history.append(board.get_fen())
+	refresh_visuals()
+	
+	# Trigger initial analysis
+	print_perft_analysis()
+
+func setup_ui():
+	var canvas = CanvasLayer.new()
+	add_child(canvas)
+	promotion_panel = PanelContainer.new()
+	promotion_panel.visible = false
+	promotion_panel.anchors_preset = Control.PRESET_CENTER 
+	promotion_panel.position = Vector2(10, 52) 
+	canvas.add_child(promotion_panel)
+	var hbox = HBoxContainer.new()
+	promotion_panel.add_child(hbox)
+	var options = ["q", "r", "b", "n"]
+	for type in options:
+		var btn = Button.new()
+		btn.custom_minimum_size = Vector2(16, 16)
+		btn.pressed.connect(self._on_promotion_selected.bind(type))
+		hbox.add_child(btn)
+		promotion_buttons[type] = btn
+
+func grid_to_square(grid_pos: Vector2i) -> int:
+	var file = grid_pos.x
+	var rank = 7 - grid_pos.y 
+	return rank * 8 + file
+
+func square_to_grid(square: int) -> Vector2i:
+	var file = square % 8
+	@warning_ignore("integer_division")
+	var rank = square / 8
+	return Vector2i(file, 7 - rank) 
+
+func get_data_at(grid_pos: Vector2i) -> Dictionary:
+	var square = grid_to_square(grid_pos)
+	return decode_piece(board.get_piece_on_square(square))
+
+func decode_piece(piece_value: int) -> Dictionary:
+	var piece_type = piece_value & PIECE_TYPE_MASK
+	var color_bits = piece_value & COLOR_MASK
+	if piece_type == PIECE_NONE: return {}
+	
+	var type_str = ""
+	match piece_type:
+		PIECE_PAWN: type_str = "p"
+		PIECE_KNIGHT: type_str = "n"
+		PIECE_BISHOP: type_str = "b"
+		PIECE_ROOK: type_str = "r"
+		PIECE_QUEEN: type_str = "q"
+		PIECE_KING: type_str = "k"
+	
+	var color = 0 if color_bits == COLOR_WHITE else 1
+	return {"type": type_str, "color": color}
+
+func get_valid_moves_for_piece(grid_pos: Vector2i) -> Array:
+	var square = grid_to_square(grid_pos)
+	var move_squares = board.get_legal_moves_for_piece(square)
+	var result = []
+	for target_square in move_squares:
+		result.append(square_to_grid(target_square))
+	return result
+
+func _input(event):
+	if is_promoting: return
+	
+	if event is InputEventKey and event.pressed and event.keycode == KEY_LEFT:
+		revert_last_move()
+		return
+
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		var clicked_pos = pixel_to_grid(event.position)
+		if not is_on_board(clicked_pos): return
+
+		if selected_pos != null:
+			if clicked_pos == selected_pos:
+				deselect_piece()
+			else:
+				var valid_targets = get_valid_moves_for_piece(selected_pos)
+				
+				if clicked_pos in valid_targets:
+					var move_start = selected_pos
+					var move_end = clicked_pos
+					
+					var start_square = grid_to_square(selected_pos)
+					var end_square = grid_to_square(clicked_pos)
+					
+					var result = board.attempt_move(start_square, end_square)
+					if result == 1:
+						update_last_move_visuals(move_start, move_end)
+						deselect_piece()
+						refresh_visuals()
+						record_fen()
+						# CRITICAL: Run PERFT after move
+						print_perft_analysis()
+					elif result == 2:
+						pending_promotion_move_start = move_start
+						pending_promotion_move_end = move_end
+						refresh_visuals()
+						var piece_data = get_data_at(clicked_pos)
+						start_promotion(piece_data)
+				else:
+					var p = get_data_at(clicked_pos)
+					if not p.is_empty() and p.color == board.get_turn():
+						select_piece(clicked_pos)
+					else:
+						deselect_piece()
+		else:
+			var p = get_data_at(clicked_pos)
+			if not p.is_empty() and p.color == board.get_turn():
+				select_piece(clicked_pos)
+
+func select_piece(pos: Vector2i):
+	deselect_piece()
+	selected_pos = pos
+	spawn_highlight(tex_moving, pos)
+	
+	var valid_moves = get_valid_moves_for_piece(pos)
+	for target in valid_moves:
+		var target_data = get_data_at(target)
+		var is_capture = not target_data.is_empty()
+		
+		if target_data.is_empty():
+			var piece_data = get_data_at(pos)
+			if piece_data.has("type") and piece_data.type == "p":
+				if target.x != pos.x: is_capture = true
+		
+		if is_capture: spawn_highlight(tex_capture, target)
+		else: spawn_highlight(tex_move, target)
+
+func deselect_piece():
+	selected_pos = null
+	clear_temp_highlights()
+
+func spawn_highlight(texture, grid_pos):
+	var s = Sprite2D.new()
+	s.texture = texture
+	s.position = grid_to_pixel(Vector2(grid_pos.x, grid_pos.y))
+	$Highlights.add_child(s)
+	highlight_sprites.append(s)
+
+func clear_temp_highlights():
+	for s in highlight_sprites: s.queue_free()
+	highlight_sprites.clear()
+
+func update_last_move_visuals(start: Vector2i, end: Vector2i):
+	for s in last_move_sprites: s.queue_free()
+	last_move_sprites.clear()
+	
+	var s1 = Sprite2D.new()
+	s1.texture = tex_moved
+	s1.position = grid_to_pixel(Vector2(start.x, start.y))
+	$Highlights.add_child(s1)
+	last_move_sprites.append(s1)
+	
+	var s2 = Sprite2D.new()
+	s2.texture = tex_moved
+	s2.position = grid_to_pixel(Vector2(end.x, end.y))
+	$Highlights.add_child(s2)
+	last_move_sprites.append(s2)
+
+func refresh_visuals():
+	var active_positions = []
+	for x in range(8):
+		for y in range(8):
+			var pos = Vector2i(x, y)
+			var data = get_data_at(pos)
+			if data.is_empty():
+				if sprites.has(pos):
+					sprites[pos].queue_free()
+					sprites.erase(pos)
+			else:
+				active_positions.append(pos)
+				var type = data["type"]
+				var color = data["color"]
+				if sprites.has(pos):
+					sprites[pos].texture = textures[color][type]
+				else:
+					var s = Sprite2D.new()
+					s.texture = textures[color][type]
+					s.position = grid_to_pixel(Vector2(x, y))
+					$Pieces.add_child(s)
+					sprites[pos] = s
+				sprites[pos].position = grid_to_pixel(Vector2(x, y))
+
+func start_promotion(piece_data):
+	is_promoting = true
+	var color = piece_data["color"]
+	for type in promotion_buttons:
+		promotion_buttons[type].icon = textures[color][type]
+	promotion_panel.visible = true
+	clear_temp_highlights()
+
+func _on_promotion_selected(type):
+	board.commit_promotion(type)
+	promotion_panel.visible = false
+	is_promoting = false
+	
+	if pending_promotion_move_start != null and pending_promotion_move_end != null:
+		update_last_move_visuals(pending_promotion_move_start, pending_promotion_move_end)
+		pending_promotion_move_start = null
+		pending_promotion_move_end = null
+	
+	deselect_piece()
+	refresh_visuals()
+	record_fen()
+	# CRITICAL: Run PERFT after promotion
+	print_perft_analysis()
+
+func revert_last_move():
+	var moves = board.get_moves()
+	if moves.size() == 0: return 
+	
+	board.revert_move()
+	deselect_piece()
+	
+	if fen_history.size() > 1: fen_history.pop_back()
+	
+	for s in last_move_sprites: s.queue_free()
+	last_move_sprites.clear()
+	
+	var remaining_moves = board.get_moves()
+	if remaining_moves.size() > 0:
+		var last_uci = remaining_moves[remaining_moves.size() - 1]
+		var prev_move = parse_uci_move(last_uci)
+		if prev_move.size() == 2:
+			update_last_move_visuals(prev_move[0], prev_move[1])
+	
+	refresh_visuals()
+	# CRITICAL: Run PERFT after undo
+	print_perft_analysis()
+
+func parse_uci_move(uci: String) -> Array:
+	if uci.length() < 4: return []
+	var from_file = uci.unicode_at(0) - "a".unicode_at(0)
+	var from_rank = uci.unicode_at(1) - "1".unicode_at(0)
+	var to_file = uci.unicode_at(2) - "a".unicode_at(0)
+	var to_rank = uci.unicode_at(3) - "1".unicode_at(0)
+	return [Vector2i(from_file, 7 - from_rank), Vector2i(to_file, 7 - to_rank)]
+
+func record_fen():
+	fen_history.append(board.get_fen())
+
+func format_number(n: int) -> String:
+	var s = str(n)
+	var result = ""
+	var count = 0
+	for i in range(s.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0:
+			result = "," + result
+		result = s[i] + result
+		count += 1
+	return result
+
+func print_perft_analysis():
+	print("\n" + "=".repeat(70))
+	print("PERFT Analysis - Move %d" % [fen_history.size() - 1])
+	print("Position: %s" % board.get_fen())
+	print("To move: %s" % ("White" if board.get_turn() == 0 else "Black"))
+	print("-".repeat(70))
+	print("%-8s %18s %12s %15s" % ["Depth", "Nodes", "Time (ms)", "Nodes/sec"])
+	print("-".repeat(70))
+	
+	var total_time = 0
+	var total_nodes = 0
+	
+	for depth in range(1, perft_max_depth + 1):
+		var start_time = Time.get_ticks_usec()
+		var count = board.count_all_moves(depth)
+		var end_time = Time.get_ticks_usec()
+		var elapsed_us = end_time - start_time
+		var elapsed_ms = elapsed_us / 1000.0
+		
+		total_time += elapsed_us
+		total_nodes += count
+		
+		var nps = 0
+		if elapsed_us > 0:
+			nps = int(count * 1000000.0 / elapsed_us)
+		
+		print("%-8d %18s %12.1f %15s" % [depth, format_number(count), elapsed_ms, format_number(nps)])
+	
+	print("-".repeat(70))
+	var total_nps = 0
+	if total_time > 0:
+		total_nps = int(total_nodes * 1000000.0 / total_time)
+	print("Total: %s nodes in %.1f ms (%s nodes/sec)" % [
+		format_number(total_nodes), 
+		total_time / 1000.0,
+		format_number(total_nps)
+	])
+	print("=".repeat(70) + "\n")
+
+func grid_to_pixel(grid_pos): return grid_pos * TILE_SIZE + BOARD_OFFSET
+func pixel_to_grid(pixel_pos): return Vector2i(floor(pixel_pos.x / TILE_SIZE), floor(pixel_pos.y / TILE_SIZE))
+func is_on_board(pos): return pos.x >= 0 and pos.x < 8 and pos.y >= 0 and pos.y < 8
