@@ -414,9 +414,8 @@ func _on_perft_analysis_complete():
 
 func cleanup_thread():
 	# Properly cleanup the thread
-	if perft_thread != null and perft_thread.is_alive():
-	# This should only be called when is_analyzing is false (thread has completed)
-	# or when forcing cleanup on scene exit
+	if perft_thread != null:
+		# Check if thread was started (and wait for it to finish if so)
 		if perft_thread.is_started():
 			perft_thread.wait_to_finish()
 		perft_thread = null
