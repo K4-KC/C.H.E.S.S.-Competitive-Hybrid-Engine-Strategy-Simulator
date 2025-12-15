@@ -405,7 +405,6 @@ func _threaded_perft_analysis(data: Dictionary):
 
 func _on_perft_analysis_complete():
 	# This runs on the main thread after analysis completes
-	cleanup_thread()
 	is_analyzing = false
 	
 	# If another analysis was queued while this was running, start it now
@@ -416,8 +415,11 @@ func _on_perft_analysis_complete():
 func cleanup_thread():
 	# Properly cleanup the thread
 	if perft_thread != null and perft_thread.is_alive():
-		perft_thread.wait_to_finish()
-	perft_thread = null
+	# This should only be called when is_analyzing is false (thread has completed)
+	# or when forcing cleanup on scene exit
+		if perft_thread.is_started():
+			perft_thread.wait_to_finish()
+		perft_thread = null
 
 func _exit_tree():
 	# CRITICAL: Cleanup thread when node is removed from scene tree
