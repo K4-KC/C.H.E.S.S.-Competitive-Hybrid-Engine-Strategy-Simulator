@@ -604,7 +604,7 @@ void Board::generate_all_pseudo_legal(MoveList &moves) const {
     }
 }
 
-// ==================== FAST MAKE/UNMAKE FOR PERFT ====================
+// ==================== FAST MAKE/UNMAKE ===========================
 
 void Board::make_move_fast(const FastMove &m) {
     uint8_t moving_piece = squares[m.from];
@@ -856,10 +856,6 @@ void Board::add_knight_moves(uint8_t pos, Array &moves) const {
             moves.append((int)to);
         }
     }
-}
-
-void Board::add_sliding_moves(uint8_t pos, Array &moves, const int directions[][2], int num_directions) const {
-    // Not used
 }
 
 void Board::add_bishop_moves(uint8_t pos, Array &moves) const {

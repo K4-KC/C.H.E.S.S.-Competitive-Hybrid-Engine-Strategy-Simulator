@@ -161,7 +161,6 @@ private:
     
     void add_pawn_moves(uint8_t pos, Array &moves) const;
     void add_knight_moves(uint8_t pos, Array &moves) const;
-    void add_sliding_moves(uint8_t pos, Array &moves, const int directions[][2], int num_directions) const;
     void add_bishop_moves(uint8_t pos, Array &moves) const;
     void add_rook_moves(uint8_t pos, Array &moves) const;
     void add_queen_moves(uint8_t pos, Array &moves) const;
