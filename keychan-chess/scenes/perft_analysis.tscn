@@ -1,7 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://ge2tyiwgubfg"]
+[gd_scene load_steps=3 format=3 uid="uid://x5duvsx2gch4"]
 
-[ext_resource type="Script" uid="uid://chatm20gdkevy" path="res://scenes/perft_analysis.gd" id="1_rwnvk"]
-[ext_resource type="Texture2D" uid="uid://cwijpkc67py3m" path="res://assets/textures/backgrounds/board0.png" id="2_p32q6"]
+[ext_resource type="Script" path="res://scenes/perft_analysis.gd" id="1_rwnvk"]
+[ext_resource type="Texture2D" uid="uid://h7goddyvhjdx" path="res://assets/textures/backgrounds/board0.png" id="2_p32q6"]
 
 [node name="PerftAnalysis" type="Node2D"]
 script = ExtResource("1_rwnvk")

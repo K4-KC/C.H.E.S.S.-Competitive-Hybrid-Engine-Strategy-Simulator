@@ -1,11 +1,13 @@
-[gd_scene load_steps=3 format=3 uid="uid://b33qg1yf5x17n"]
+[gd_scene load_steps=3 format=3 uid="uid://cfnymn6n4bk1u"]
 
-[ext_resource type="Script" uid="uid://drrk27ddkyud8" path="res://scenes/player_vs_player.gd" id="1_urtwi"]
-[ext_resource type="Texture2D" uid="uid://cwijpkc67py3m" path="res://assets/textures/backgrounds/board0.png" id="2_pstoo"]
+[ext_resource type="Script" path="res://scenes/player_vs_player.gd" id="1_urtwi"]
+
+[sub_resource type="CompressedTexture2D" id="CompressedTexture2D_urtwi"]
+load_path = "res://.godot/imported/board0.png-65ad411279bd0e0c18678b10f3949cad.ctex"
 
 [node name="PlayerVsPlayer" type="Node2D"]
 script = ExtResource("1_urtwi")
 
 [node name="Board0" type="Sprite2D" parent="."]
 position = Vector2(64, 64)
-texture = ExtResource("2_pstoo")
+texture = SubResource("CompressedTexture2D_urtwi")
