@@ -16,3 +16,4 @@ src/*.obj
 *.exp
 .sconsign.dblite
 *.dblite
+*.import
