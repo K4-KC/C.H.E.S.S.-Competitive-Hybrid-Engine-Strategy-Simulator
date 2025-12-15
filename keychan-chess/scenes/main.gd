@@ -21,7 +21,6 @@ func _ready():
 	# Create a CanvasLayer to ensure UI stays on top and aligned
 	ui_layer = CanvasLayer.new()
 	add_child(ui_layer)
-	
 	setup_main_menu_ui()
 
 func setup_main_menu_ui():

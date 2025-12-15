@@ -344,7 +344,7 @@ func check_game_over():
 			2: print("Game Over: Checkmate! Black wins!")
 			3: print("Game Over: Draw / Stalemate!")
 
-# Utility
+# Utility functions
 func grid_to_pixel(grid_pos): return grid_pos * TILE_SIZE + BOARD_OFFSET
 func pixel_to_grid(pixel_pos): return Vector2i(floor(pixel_pos.x / TILE_SIZE), floor(pixel_pos.y / TILE_SIZE))
 func is_on_board(pos): return pos.x >= 0 and pos.x < 8 and pos.y >= 0 and pos.y < 8
