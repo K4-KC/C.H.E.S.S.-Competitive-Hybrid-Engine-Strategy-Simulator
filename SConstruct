@@ -20,7 +20,7 @@ sources = Glob("src/*.cpp")
 
 # Changed library name from "NeuralNet" to "chess_ai" to reflect combined module
 library = env.SharedLibrary(
-    "chess_godot/bin/chess_ai{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+    "keychan-chess/bin/kCC_modules{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
     source=sources,
 )
 

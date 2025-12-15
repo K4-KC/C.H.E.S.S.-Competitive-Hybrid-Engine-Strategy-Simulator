@@ -1,9 +1,7 @@
 #include "register_types.h"
 
 // Custom Classes
-#include "board_rules.h"
-#include "neural_net.h"
-#include "chess_agent.h"
+#include "board.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -16,9 +14,7 @@ void initialize_chess_ai_module(ModuleInitializationLevel p_level) {
         return;
     }
 
-    ClassDB::register_class<BoardRules>();
-    ClassDB::register_class<NeuralNet>();
-    ClassDB::register_class<ChessAgent>();
+    ClassDB::register_class<Board>();
 }
 
 void uninitialize_chess_ai_module(ModuleInitializationLevel p_level) {

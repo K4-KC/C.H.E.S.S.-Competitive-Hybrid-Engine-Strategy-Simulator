@@ -12,3 +12,8 @@
 src/*.obj
 
 /venv
+*.dll
+*.lib
+*.exp
+.sconsign.dblite
+*.dblite

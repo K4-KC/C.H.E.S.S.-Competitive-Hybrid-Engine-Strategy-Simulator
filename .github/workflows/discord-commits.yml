@@ -2,7 +2,7 @@ name: Notify Discord on key GitHub events
 
 on:
   push:
-    branches: [main, fen-logic, godot-cpp-dll]
+    branches: ["**"]
   create:
     branches: ["**"]
   delete:

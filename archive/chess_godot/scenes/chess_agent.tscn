@@ -1,0 +1,13 @@
+[gd_scene load_steps=3 format=3 uid="uid://cvvjwiyshy2kn"]
+
+[ext_resource type="Script" uid="uid://ja7cc74364nx" path="res://scenes/chess_agent.gd" id="1_d3krj"]
+[ext_resource type="Texture2D" uid="uid://fqg063llag42" path="res://assets/board0.png" id="2_mqksk"]
+
+[node name="ChessAgent" type="Node2D"]
+script = ExtResource("1_d3krj")
+
+[node name="Board" type="Sprite2D" parent="."]
+position = Vector2(64, 64)
+texture = ExtResource("2_mqksk")
+
+[node name="Pieces" type="Node2D" parent="."]
