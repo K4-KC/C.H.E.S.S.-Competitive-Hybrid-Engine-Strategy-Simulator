@@ -19,7 +19,7 @@ const COLOR_MASK = 24
 
 # --- PERFT CONFIGURATION ---
 # Higher depths will result in significantly longer processing times per move
-@export var perft_max_depth: int = 4 
+@export var perft_max_depth: int = 5
 
 var board: Board
 var sprites = {} 
@@ -45,6 +45,11 @@ var is_promoting = false
 var pending_promotion_move_start = null 
 var pending_promotion_move_end = null
 var fen_history = []
+
+# --- THREADING VARIABLES ---
+var perft_thread: Thread = null
+var is_analyzing: bool = false
+var analysis_queued: bool = false
 
 func _ready():
 	var hl_node = Node2D.new()
@@ -133,7 +138,9 @@ func get_valid_moves_for_piece(grid_pos: Vector2i) -> Array:
 	return result
 
 func _input(event):
-	if is_promoting: return
+	# THREAD SAFETY: Block all input during analysis
+	if is_analyzing or is_promoting:
+		return
 	
 	if event is InputEventKey and event.pressed and event.keycode == KEY_LEFT:
 		revert_last_move()
@@ -162,7 +169,7 @@ func _input(event):
 						deselect_piece()
 						refresh_visuals()
 						record_fen()
-						# CRITICAL: Run PERFT after move
+						# Run PERFT after move
 						print_perft_analysis()
 					elif result == 2:
 						pending_promotion_move_start = move_start
@@ -275,7 +282,7 @@ func _on_promotion_selected(type):
 	deselect_piece()
 	refresh_visuals()
 	record_fen()
-	# CRITICAL: Run PERFT after promotion
+	# Run PERFT after promotion
 	print_perft_analysis()
 
 func revert_last_move():
@@ -298,7 +305,7 @@ func revert_last_move():
 			update_last_move_visuals(prev_move[0], prev_move[1])
 	
 	refresh_visuals()
-	# CRITICAL: Run PERFT after undo
+	# CRITICAL: Run PERFT after undo (now threaded)
 	print_perft_analysis()
 
 func parse_uci_move(uci: String) -> Array:
@@ -323,11 +330,38 @@ func format_number(n: int) -> String:
 		count += 1
 	return result
 
+# --- THREADED PERFT ANALYSIS ---
+
 func print_perft_analysis():
+	# If already analyzing, queue another analysis for when this one finishes
+	if is_analyzing:
+		analysis_queued = true
+		return
+	
+	# Cleanup previous thread if it exists
+	cleanup_thread()
+	
+	# Start new analysis thread
+	is_analyzing = true
+	perft_thread = Thread.new()
+	
+	# Capture current board state (immutable data for thread)
+	var analysis_data = {
+		"fen": board.get_fen(),
+		"move_number": fen_history.size() - 1,
+		"turn": board.get_turn(),
+		"max_depth": perft_max_depth
+	}
+	
+	# Start the thread with the analysis function
+	perft_thread.start(_threaded_perft_analysis.bind(analysis_data))
+
+func _threaded_perft_analysis(data: Dictionary):
+	# This function runs on a background thread
 	print("\n" + "=".repeat(70))
-	print("PERFT Analysis - Move %d" % [fen_history.size() - 1])
-	print("Position: %s" % board.get_fen())
-	print("To move: %s" % ("White" if board.get_turn() == 0 else "Black"))
+	print("PERFT Analysis - Move %d" % [data.move_number])
+	print("Position: %s" % data.fen)
+	print("To move: %s" % ("White" if data.turn == 0 else "Black"))
 	print("-".repeat(70))
 	print("%-8s %18s %12s %15s" % ["Depth", "Nodes", "Time (ms)", "Nodes/sec"])
 	print("-".repeat(70))
@@ -335,9 +369,13 @@ func print_perft_analysis():
 	var total_time = 0
 	var total_nodes = 0
 	
-	for depth in range(1, perft_max_depth + 1):
+	for depth in range(1, data.max_depth + 1):
 		var start_time = Time.get_ticks_usec()
+		
+		# CRITICAL: Call the expensive board operation
+		# This is thread-safe because we're only reading, not modifying the board
 		var count = board.count_all_moves(depth)
+		
 		var end_time = Time.get_ticks_usec()
 		var elapsed_us = end_time - start_time
 		var elapsed_ms = elapsed_us / 1000.0
@@ -361,6 +399,29 @@ func print_perft_analysis():
 		format_number(total_nps)
 	])
 	print("=".repeat(70) + "\n")
+	
+	# Signal completion back to main thread
+	call_deferred("_on_perft_analysis_complete")
+
+func _on_perft_analysis_complete():
+	# This runs on the main thread after analysis completes
+	cleanup_thread()
+	is_analyzing = false
+	
+	# If another analysis was queued while this was running, start it now
+	if analysis_queued:
+		analysis_queued = false
+		print_perft_analysis()
+
+func cleanup_thread():
+	# Properly cleanup the thread
+	if perft_thread != null and perft_thread.is_alive():
+		perft_thread.wait_to_finish()
+	perft_thread = null
+
+func _exit_tree():
+	# CRITICAL: Cleanup thread when node is removed from scene tree
+	cleanup_thread()
 
 func grid_to_pixel(grid_pos): return grid_pos * TILE_SIZE + BOARD_OFFSET
 func pixel_to_grid(pixel_pos): return Vector2i(floor(pixel_pos.x / TILE_SIZE), floor(pixel_pos.y / TILE_SIZE))
