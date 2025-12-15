@@ -80,13 +80,15 @@ func setup_main_menu_ui():
 	mode_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	
 	pvp_btn = Button.new()
-	pvp_btn.text = "Player Vs Player"
+	pvp_btn.text = "P Vs P"
+	pvp_btn.focus_mode = Control.FOCUS_NONE
 	pvp_btn.toggle_mode = true
 	pvp_btn.button_pressed = true # Default
 	pvp_btn.pressed.connect(_on_pvp_selected)
 	
 	perft_btn = Button.new()
-	perft_btn.text = "Perft Analysis"
+	perft_btn.text = "Perft"
+	perft_btn.focus_mode = Control.FOCUS_NONE
 	perft_btn.toggle_mode = true
 	perft_btn.pressed.connect(_on_perft_selected)
 	
@@ -104,8 +106,10 @@ func setup_main_menu_ui():
 	
 	fen_input = LineEdit.new()
 	fen_input.text = ""
+	# fen_input.focus_mode = Control.FOCUS_NONE
+	fen_input.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	fen_input.placeholder_text = "Paste custom FEN here..."
-	fen_input.custom_minimum_size.x = 70
+	fen_input.custom_minimum_size.x = 100
 	vbox.add_child(fen_input)
 	
 	# Bottom Controls (Default & Play)
@@ -115,6 +119,7 @@ func setup_main_menu_ui():
 	# Default Button (Left side)
 	default_btn = Button.new()
 	default_btn.text = "Default"
+	default_btn.focus_mode = Control.FOCUS_NONE
 	default_btn.pressed.connect(_on_default_pressed)
 	bottom_hbox.add_child(default_btn)
 	
@@ -126,6 +131,7 @@ func setup_main_menu_ui():
 	# Play Button (Right side)
 	play_btn = Button.new()
 	play_btn.text = "Play"
+	play_btn.focus_mode = Control.FOCUS_NONE
 	play_btn.pressed.connect(_on_play_pressed)
 	play_btn.custom_minimum_size.x = 20
 	bottom_hbox.add_child(play_btn)

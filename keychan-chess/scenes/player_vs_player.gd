@@ -77,6 +77,7 @@ func _ready():
 	refresh_visuals()
 	
 	print("PvP Mode Ready. White to move.")
+	print(start_fen)
 
 func setup_ui():
 	var canvas = CanvasLayer.new()
@@ -318,7 +319,9 @@ func revert_last_move():
 			update_last_move_visuals(prev_move[0], prev_move[1])
 	
 	refresh_visuals()
-	print("Move reverted. Current turn: " + ("White" if board.get_turn() == 0 else "Black"))
+	print("\n\n" + "=".repeat(50) + "\n")
+	for fen in fen_history:
+		print(fen)
 
 func parse_uci_move(uci: String) -> Array:
 	if uci.length() < 4: return []
@@ -331,6 +334,7 @@ func parse_uci_move(uci: String) -> Array:
 func record_fen():
 	var fen = board.get_fen()
 	fen_history.append(fen)
+	print(fen)
 
 func check_game_over():
 	if board.is_game_over():
