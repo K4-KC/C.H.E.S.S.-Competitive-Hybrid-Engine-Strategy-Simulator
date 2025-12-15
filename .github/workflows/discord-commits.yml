@@ -27,7 +27,7 @@ jobs:
               repo: context.repo.repo,
               ref: context.sha
             });
-            return commit.data.files.map(f => `_${f.filename}_`).join("\n");
+            return commit.data.files.map(f => `*${f.filename}*`).join("\n");
       - name: Notify commit to Discord
         uses: Sniddl/discord-commits@v1.6
         with:
