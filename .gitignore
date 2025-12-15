@@ -8,7 +8,6 @@
 /chess_godot/bin
 
 *.obj
-*.dblite
 src/*.obj
 
 /venv
