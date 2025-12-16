@@ -68,7 +68,39 @@ using namespace godot;
 #define SCORE_QUEEN_PROMOTION   20000
 #define SCORE_CAPTURE_BASE      10000
 #define SCORE_OTHER_PROMOTION   9000
+#define SCORE_KILLER_1          8000    // First killer move
+#define SCORE_KILLER_2          7500    // Second killer move
+#define SCORE_HISTORY_MAX       7000    // Maximum history score (scaled)
 #define SCORE_QUIET_MOVE        0
+
+// ==================== KILLER MOVES & HISTORY HEURISTIC ====================
+
+// Maximum search depth (ply from root)
+#define MAX_PLY 64
+
+// Killer move structure - stores from/to for a quiet move
+struct KillerMove {
+    uint8_t from;
+    uint8_t to;
+    
+    inline bool matches(uint8_t f, uint8_t t) const {
+        return from == f && to == t;
+    }
+    
+    inline void set(uint8_t f, uint8_t t) {
+        from = f;
+        to = t;
+    }
+    
+    inline void clear() {
+        from = 255;
+        to = 255;
+    }
+    
+    inline bool is_valid() const {
+        return from != 255;
+    }
+};
 
 // ==================== TRANSPOSITION TABLE ====================
 
@@ -177,6 +209,42 @@ private:
     void tt_clear();
     void tt_new_search();  // Increment age for new search
 
+    // ==================== KILLER MOVES ====================
+    // Stores 2 killer moves per ply (quiet moves that caused beta cutoff)
+    // killer_moves[ply][0] = most recent killer
+    // killer_moves[ply][1] = second most recent killer
+    KillerMove killer_moves[MAX_PLY][2];
+    
+    // Clear all killer moves (call at start of new search)
+    void clear_killers();
+    
+    // Store a killer move at given ply (shifts old killer to slot 1)
+    void store_killer(int ply, uint8_t from, uint8_t to);
+    
+    // Check if move matches a killer at given ply (returns 1, 2, or 0)
+    int is_killer(int ply, uint8_t from, uint8_t to) const;
+    
+    // ==================== HISTORY HEURISTIC ====================
+    // Stores success counts for quiet moves indexed by [from][to]
+    // Higher values = move has been good in many positions
+    int32_t history_table[64][64];
+    
+    // Maximum history value before scaling down
+    static const int32_t HISTORY_MAX = 400000;
+    
+    // Clear history table (call at start of new search)
+    void clear_history();
+    
+    // Update history for a quiet move that caused cutoff
+    // bonus = depth * depth (deeper cutoffs are more valuable)
+    void update_history(uint8_t from, uint8_t to, int depth);
+    
+    // Age/decay history values (call between iterations if desired)
+    void age_history();
+    
+    // Get history score for a move
+    int32_t get_history(uint8_t from, uint8_t to) const;
+
     // ==================== PRECOMPUTED TABLES ====================
     static bool knight_attacks_initialized;
     static uint8_t knight_attack_squares[64][8];
@@ -246,11 +314,11 @@ private:
     String move_to_notation(const Move &move) const;
 
     // ==================== AI INTERNAL HELPERS ====================
-    int16_t score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to) const;
-    void score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to) const;
+    int16_t score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
+    void score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
     void sort_moves(MoveList &moves) const;
     
-    int minimax_internal(int depth, int alpha, int beta, bool is_maximizing);
+    int minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing);
     bool has_legal_moves() const;
 
 protected:

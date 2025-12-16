@@ -159,6 +159,74 @@ TTEntry* Board::tt_probe(uint64_t key) const {
     return nullptr;
 }
 
+// ==================== KILLER MOVES ====================
+
+void Board::clear_killers() {
+    for (int ply = 0; ply < MAX_PLY; ply++) {
+        killer_moves[ply][0].clear();
+        killer_moves[ply][1].clear();
+    }
+}
+
+void Board::store_killer(int ply, uint8_t from, uint8_t to) {
+    if (ply < 0 || ply >= MAX_PLY) return;
+    
+    // Don't store if it's already the first killer
+    if (killer_moves[ply][0].matches(from, to)) return;
+    
+    // Shift killer 1 to killer 2, store new one as killer 1
+    killer_moves[ply][1] = killer_moves[ply][0];
+    killer_moves[ply][0].set(from, to);
+}
+
+int Board::is_killer(int ply, uint8_t from, uint8_t to) const {
+    if (ply < 0 || ply >= MAX_PLY) return 0;
+    
+    if (killer_moves[ply][0].matches(from, to)) return 1;
+    if (killer_moves[ply][1].matches(from, to)) return 2;
+    return 0;
+}
+
+// ==================== HISTORY HEURISTIC ====================
+
+void Board::clear_history() {
+    memset(history_table, 0, sizeof(history_table));
+}
+
+void Board::update_history(uint8_t from, uint8_t to, int depth) {
+    if (from >= 64 || to >= 64) return;
+    
+    // Bonus is depth^2 - deeper cutoffs are more valuable
+    int32_t bonus = depth * depth;
+    
+    history_table[from][to] += bonus;
+    
+    // If history value gets too large, scale everything down
+    // This prevents overflow and allows adaptation to new positions
+    if (history_table[from][to] > HISTORY_MAX) {
+        for (int f = 0; f < 64; f++) {
+            for (int t = 0; t < 64; t++) {
+                history_table[f][t] /= 2;
+            }
+        }
+    }
+}
+
+void Board::age_history() {
+    // Decay all history values by half
+    // Can be called between iterations to favor recent information
+    for (int f = 0; f < 64; f++) {
+        for (int t = 0; t < 64; t++) {
+            history_table[f][t] /= 2;
+        }
+    }
+}
+
+int32_t Board::get_history(uint8_t from, uint8_t to) const {
+    if (from >= 64 || to >= 64) return 0;
+    return history_table[from][to];
+}
+
 // ==================== ZOBRIST HASHING ====================
 
 int Board::get_zobrist_piece_index(uint8_t piece) const {
@@ -258,6 +326,10 @@ Board::Board() {
     for (int i = 0; i < 4; i++) {
         castling_rights[i] = true;
     }
+    
+    // Initialize killer moves and history
+    clear_killers();
+    clear_history();
 }
 
 Board::~Board() {
@@ -921,9 +993,9 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     turn = 1 - turn;
 }
 
-// ==================== MOVE ORDERING ====================
+// ==================== MOVE ORDERING WITH KILLERS AND HISTORY ====================
 
-int16_t Board::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to) const {
+int16_t Board::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
     // Highest priority: TT best move
     if (m.from == tt_best_from && m.to == tt_best_to && tt_best_from != 255) {
         return SCORE_TT_MOVE;
@@ -933,6 +1005,7 @@ int16_t Board::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_be
     uint8_t promo_piece = (m.flags >> 3) & 7;
     bool is_capture = (m.flags & 1) || (m.flags & 2);
     
+    // Promotions
     if (promo_piece) {
         if (promo_piece == PIECE_QUEEN) {
             score = SCORE_QUEEN_PROMOTION;
@@ -945,24 +1018,47 @@ int16_t Board::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_be
             score += mvv_lva_table[victim_type][PIECE_PAWN];
         }
     }
+    // Captures - use MVV-LVA
     else if (is_capture) {
         uint8_t victim_type = GET_PIECE_TYPE(m.captured);
         uint8_t attacker_type = GET_PIECE_TYPE(squares[m.from]);
         score = SCORE_CAPTURE_BASE + mvv_lva_table[victim_type][attacker_type];
     }
+    // Quiet moves - check killers and history
     else {
-        score = SCORE_QUIET_MOVE;
-        if (m.flags & 4) {
-            score = 50;
+        // Check killer moves
+        int killer_idx = is_killer(ply, m.from, m.to);
+        if (killer_idx == 1) {
+            score = SCORE_KILLER_1;
+        } else if (killer_idx == 2) {
+            score = SCORE_KILLER_2;
+        } else {
+            // Use history heuristic for other quiet moves
+            int32_t hist = get_history(m.from, m.to);
+            
+            // Scale history to fit in score range (0 to SCORE_HISTORY_MAX)
+            // Clamp to prevent overflow
+            if (hist > 0) {
+                // Scale history logarithmically to prevent domination
+                score = static_cast<int16_t>(std::min(static_cast<int32_t>(SCORE_HISTORY_MAX), 
+                                                       hist / 10));
+            } else {
+                score = SCORE_QUIET_MOVE;
+            }
+            
+            // Small bonus for castling
+            if (m.flags & 4) {
+                score += 50;
+            }
         }
     }
     
     return score;
 }
 
-void Board::score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to) const {
+void Board::score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
     for (int i = 0; i < moves.count; i++) {
-        moves.moves[i].score = score_move(moves.moves[i], tt_best_from, tt_best_to);
+        moves.moves[i].score = score_move(moves.moves[i], tt_best_from, tt_best_to, ply);
     }
 }
 
@@ -1031,8 +1127,8 @@ bool Board::has_legal_moves() const {
     return false;
 }
 
-// Minimax with Alpha-Beta Pruning and Transposition Table
-int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) {
+// Minimax with Alpha-Beta Pruning, TT, Killer Moves, and History Heuristic
+int Board::minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing) {
     int original_alpha = alpha;
     
     // ==================== TT PROBE ====================
@@ -1071,18 +1167,17 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
     if (!has_moves) {
         int score;
         if (in_check) {
-            score = is_maximizing ? (-CHECKMATE_SCORE + (100 - depth)) : (CHECKMATE_SCORE - (100 - depth));
+            // Use ply for more accurate mate distance
+            score = is_maximizing ? (-CHECKMATE_SCORE + ply) : (CHECKMATE_SCORE - ply);
         } else {
             score = STALEMATE_SCORE;
         }
-        // Don't store terminal positions in TT (they're absolute)
         return score;
     }
     
     // ==================== LEAF NODE ====================
     if (depth == 0) {
         int score = evaluate_board();
-        // Store leaf evaluation in TT
         tt_store(current_hash, score, 0, TT_FLAG_EXACT, 255, 255);
         return score;
     }
@@ -1090,7 +1185,7 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
     // ==================== GENERATE AND SORT MOVES ====================
     MoveList moves;
     generate_all_pseudo_legal(moves);
-    score_moves(moves, tt_best_from, tt_best_to);
+    score_moves(moves, tt_best_from, tt_best_to, ply);  // Pass ply for killer move lookup
     sort_moves(moves);
     
     uint8_t current_color = turn;
@@ -1113,7 +1208,7 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
             
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, alpha, beta, false);
+                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, false);
                 
                 if (score > best_score) {
                     best_score = score;
@@ -1125,9 +1220,18 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
                     alpha = score;
                 }
                 
+                // Beta cutoff
                 if (score >= beta) {
                     unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    // Store with BETA flag (lower bound - failed high)
+                    
+                    // Update killer moves and history for quiet moves causing cutoff
+                    bool is_capture = (m.flags & 1) || (m.flags & 2);
+                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
+                    if (!is_capture && !is_promotion) {
+                        store_killer(ply, m.from, m.to);
+                        update_history(m.from, m.to, depth);
+                    }
+                    
                     tt_store(current_hash, best_score, depth, TT_FLAG_BETA, best_move_from, best_move_to);
                     return best_score;
                 }
@@ -1151,7 +1255,7 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
             
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, alpha, beta, true);
+                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, true);
                 
                 if (score < best_score) {
                     best_score = score;
@@ -1163,9 +1267,18 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
                     beta = score;
                 }
                 
+                // Alpha cutoff
                 if (score <= alpha) {
                     unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    // Store with ALPHA flag (upper bound - failed low)
+                    
+                    // Update killer moves and history for quiet moves causing cutoff
+                    bool is_capture = (m.flags & 1) || (m.flags & 2);
+                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
+                    if (!is_capture && !is_promotion) {
+                        store_killer(ply, m.from, m.to);
+                        update_history(m.from, m.to, depth);
+                    }
+                    
                     tt_store(current_hash, best_score, depth, TT_FLAG_ALPHA, best_move_from, best_move_to);
                     return best_score;
                 }
@@ -1175,10 +1288,7 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
         }
         
         // Determine TT flag
-        int tt_flag = (best_score >= beta) ? TT_FLAG_BETA : TT_FLAG_EXACT;  // Note: This condition is for minimizer
-        // Actually for minimizer: if best_score >= original_beta, it's a lower bound (shouldn't happen after loop)
-        // If we get here, best_score < beta, so check against original state
-        tt_flag = TT_FLAG_EXACT;  // If we searched all moves without cutoff, it's exact
+        int tt_flag = TT_FLAG_EXACT;
         tt_store(current_hash, best_score, depth, tt_flag, best_move_from, best_move_to);
         
         return best_score;
@@ -1187,6 +1297,10 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
 
 Dictionary Board::get_best_move(int depth) {
     Dictionary result;
+    
+    // Clear search tables for new search
+    clear_killers();
+    clear_history();
     
     // Start new search (increment TT age)
     tt_new_search();
@@ -1199,7 +1313,7 @@ Dictionary Board::get_best_move(int depth) {
     uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
     uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
     
-    score_moves(moves, tt_best_from, tt_best_to);
+    score_moves(moves, tt_best_from, tt_best_to, 0);  // ply = 0 at root
     sort_moves(moves);
     
     uint8_t current_color = turn;
@@ -1224,7 +1338,7 @@ Dictionary Board::get_best_move(int depth) {
         
         uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-            int score = minimax_internal(depth - 1, alpha, beta, !is_maximizing);
+            int score = minimax_internal(depth - 1, 1, alpha, beta, !is_maximizing);
             
             if (is_maximizing) {
                 if (score > best_score) {
@@ -1267,6 +1381,10 @@ Dictionary Board::get_best_move(int depth) {
 Dictionary Board::run_iterative_deepening(int max_depth) {
     Dictionary best_result;
     
+    // Clear killer moves and history for new search
+    clear_killers();
+    clear_history();
+    
     // Start new search (increment TT age once for the entire IDS)
     tt_new_search();
     
@@ -1279,13 +1397,11 @@ Dictionary Board::run_iterative_deepening(int max_depth) {
         generate_all_pseudo_legal(moves);
         
         // Probe TT for best move hint from previous iteration
-        // This is the KEY benefit of IDS with TT: the best move from depth N-1
-        // is already stored and will be searched first at depth N
         TTEntry* tt_entry = tt_probe(current_hash);
         uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
         uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
         
-        score_moves(moves, tt_best_from, tt_best_to);
+        score_moves(moves, tt_best_from, tt_best_to, 0);  // ply = 0 at root
         sort_moves(moves);
         
         uint8_t current_color = turn;
@@ -1310,7 +1426,7 @@ Dictionary Board::run_iterative_deepening(int max_depth) {
             
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(current_depth - 1, alpha, beta, !is_maximizing);
+                int score = minimax_internal(current_depth - 1, 1, alpha, beta, !is_maximizing);
                 
                 if (is_maximizing) {
                     if (score > best_score) {
@@ -1353,6 +1469,9 @@ Dictionary Board::run_iterative_deepening(int max_depth) {
                 break;
             }
         }
+        
+        // Optionally age history between iterations to favor recent info
+        // age_history();  // Uncomment if desired
     }
     
     return best_result;
@@ -1829,7 +1948,6 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
         promotion_pending = true;
         promotion_pending_from = start;
         promotion_pending_to = end;
-        
         
         return 2;
     }
