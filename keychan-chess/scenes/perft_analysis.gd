@@ -19,7 +19,7 @@ const COLOR_MASK = 24
 
 # --- PERFT CONFIGURATION ---
 # Higher depths will result in significantly longer processing times per move
-@export var perft_max_depth: int = 5
+@export var perft_max_depth: int = 5	
 
 var board: Board
 var sprites = {} 

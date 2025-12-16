@@ -9,6 +9,7 @@ const CUSTOM_FONT_SIZE = 8
 # UI Components
 var ui_layer: CanvasLayer
 var pvp_btn: Button
+var pvc_btn: Button
 var perft_btn: Button
 var fen_input: LineEdit
 var play_btn: Button
@@ -84,6 +85,13 @@ func setup_main_menu_ui():
 	pvp_btn.toggle_mode = true
 	pvp_btn.button_pressed = true # Default
 	pvp_btn.pressed.connect(_on_pvp_selected)
+
+	pvc_btn = Button.new()
+	pvc_btn.text = "P Vs C"
+	pvc_btn.focus_mode = Control.FOCUS_NONE
+	pvc_btn.toggle_mode = true
+	pvc_btn.button_pressed = false # Default
+	pvc_btn.pressed.connect(_on_pvc_selected)
 	
 	perft_btn = Button.new()
 	perft_btn.text = "Perft"
@@ -92,6 +100,7 @@ func setup_main_menu_ui():
 	perft_btn.pressed.connect(_on_perft_selected)
 	
 	mode_hbox.add_child(pvp_btn)
+	mode_hbox.add_child(pvc_btn)
 	mode_hbox.add_child(perft_btn)
 	vbox.add_child(mode_hbox)
 	
@@ -144,12 +153,17 @@ func _on_pvp_selected():
 	selected_mode = "PvP"
 	_update_button_visuals()
 
+func _on_pvc_selected():
+	selected_mode = "PvC"
+	_update_button_visuals()
+
 func _on_perft_selected():
 	selected_mode = "Perft"
 	_update_button_visuals()
 
 func _update_button_visuals():
 	pvp_btn.set_pressed_no_signal(selected_mode == "PvP")
+	pvc_btn.set_pressed_no_signal(selected_mode == "PvC")
 	perft_btn.set_pressed_no_signal(selected_mode == "Perft")
 
 func _on_default_pressed():
@@ -166,10 +180,10 @@ func _on_play_pressed():
 	var target_scene_path = ""
 	
 	if selected_mode == "PvP":
-		# Assuming the scene is saved as PlayerVsPlayer.tscn
 		target_scene_path = "res://scenes/player_vs_player.tscn"
+	elif selected_mode == "PvC":
+		target_scene_path = "res://scenes/player_vs_computer.tscn"
 	else:
-		# Assuming the scene is saved as PerftAnalysis.tscn
 		target_scene_path = "res://scenes/perft_analysis.tscn"
 	
 	# Verify file exists before changing to avoid crash
