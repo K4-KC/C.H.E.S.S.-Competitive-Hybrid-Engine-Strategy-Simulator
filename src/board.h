@@ -286,6 +286,12 @@ public:
     int evaluate_board() const;
     Dictionary get_best_move(int depth);
     
+    // Iterative Deepening Search
+    // Searches from depth 1 to max_depth, returning the best move from the deepest completed search
+    // Benefits from TT: each iteration seeds the TT for the next, improving move ordering
+    // Returns Dictionary with keys: "from", "to", "score", "depth" (actual depth completed)
+    Dictionary run_iterative_deepening(int max_depth);
+    
     // Game state queries
     bool is_checkmate(uint8_t color);
     bool is_stalemate(uint8_t color);

@@ -294,6 +294,7 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("algebraic_to_square", "algebraic"), &Board::algebraic_to_square);
     ClassDB::bind_method(D_METHOD("evaluate_board"), &Board::evaluate_board);
     ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &Board::get_best_move);
+    ClassDB::bind_method(D_METHOD("run_iterative_deepening", "max_depth"), &Board::run_iterative_deepening);
 }
 
 // ==================== BOARD SETUP ====================
@@ -1259,6 +1260,102 @@ Dictionary Board::get_best_move(int depth) {
     }
     
     return result;
+}
+
+// ==================== ITERATIVE DEEPENING SEARCH ====================
+
+Dictionary Board::run_iterative_deepening(int max_depth) {
+    Dictionary best_result;
+    
+    // Start new search (increment TT age once for the entire IDS)
+    tt_new_search();
+    
+    // Iterative deepening: search from depth 1 to max_depth
+    // Each iteration benefits from the TT entries stored by previous iterations
+    for (int current_depth = 1; current_depth <= max_depth; current_depth++) {
+        Dictionary result;
+        
+        MoveList moves;
+        generate_all_pseudo_legal(moves);
+        
+        // Probe TT for best move hint from previous iteration
+        // This is the KEY benefit of IDS with TT: the best move from depth N-1
+        // is already stored and will be searched first at depth N
+        TTEntry* tt_entry = tt_probe(current_hash);
+        uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
+        uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
+        
+        score_moves(moves, tt_best_from, tt_best_to);
+        sort_moves(moves);
+        
+        uint8_t current_color = turn;
+        bool is_maximizing = (turn == 0);
+        
+        uint8_t ep_before = en_passant_target;
+        bool castling_before[4];
+        for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+        uint64_t hash_before = current_hash;
+        
+        int alpha = INT_MIN;
+        int beta = INT_MAX;
+        
+        int best_score = is_maximizing ? INT_MIN : INT_MAX;
+        int best_from = -1;
+        int best_to = -1;
+        
+        for (int i = 0; i < moves.count; i++) {
+            FastMove &m = moves.moves[i];
+            
+            make_move_fast(m);
+            
+            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+                int score = minimax_internal(current_depth - 1, alpha, beta, !is_maximizing);
+                
+                if (is_maximizing) {
+                    if (score > best_score) {
+                        best_score = score;
+                        best_from = m.from;
+                        best_to = m.to;
+                    }
+                    if (score > alpha) {
+                        alpha = score;
+                    }
+                } else {
+                    if (score < best_score) {
+                        best_score = score;
+                        best_from = m.from;
+                        best_to = m.to;
+                    }
+                    if (score < beta) {
+                        beta = score;
+                    }
+                }
+            }
+            
+            unmake_move_fast(m, ep_before, castling_before, hash_before);
+        }
+        
+        // Store result in TT for next iteration to use
+        if (best_from >= 0) {
+            tt_store(current_hash, best_score, current_depth, TT_FLAG_EXACT, best_from, best_to);
+            
+            result["from"] = best_from;
+            result["to"] = best_to;
+            result["score"] = best_score;
+            result["depth"] = current_depth;
+            
+            // Update best result with this iteration's result
+            best_result = result;
+            
+            // Early termination: if we found a checkmate, no need to search deeper
+            if (best_score >= CHECKMATE_SCORE - 100 || best_score <= -CHECKMATE_SCORE + 100) {
+                break;
+            }
+        }
+    }
+    
+    return best_result;
 }
 
 // ==================== LEGACY API IMPLEMENTATIONS ====================

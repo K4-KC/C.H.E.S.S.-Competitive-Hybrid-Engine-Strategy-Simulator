@@ -2,13 +2,13 @@ extends Node2D
 
 # Player vs Computer Mode
 # Human plays as the starting color (usually White from standard FEN)
-# Computer uses Minimax AI to calculate its moves
+# Computer uses Minimax AI with Iterative Deepening to calculate its moves
 
 const TILE_SIZE = 16
 const BOARD_OFFSET = Vector2(8, 8)
 
 # AI Configuration
-const AI_DEPTH = 7  # Search depth for Minimax (increase for stronger play, but slower)
+const AI_DEPTH = 7  # Maximum search depth for Iterative Deepening
 
 # Piece type constants (must match board.h)
 const PIECE_NONE = 0
@@ -104,7 +104,7 @@ func _ready():
 	var ai_color_name = "White" if ai_color == 0 else "Black"
 	print("Player vs Computer Mode Ready.")
 	print("Player: %s | Computer: %s" % [player_color_name, ai_color_name])
-	print("AI Depth: %d" % AI_DEPTH)
+	print("AI Max Depth: %d (Iterative Deepening)" % AI_DEPTH)
 	print(start_fen)
 	
 	# If it's the AI's turn to start (e.g., FEN starts with Black to move and player is Black)
@@ -353,7 +353,7 @@ func _on_promotion_selected(type):
 	if not board.is_game_over():
 		make_ai_move()
 
-# --- AI Move Logic (Threaded) ---
+# --- AI Move Logic (Threaded with Iterative Deepening) ---
 
 func make_ai_move():
 	if board.is_game_over():
@@ -374,22 +374,25 @@ func make_ai_move():
 	
 	# Create and start the thread
 	ai_thread = Thread.new()
-	# We pass the depth to the thread function
+	# Pass the max depth to the thread function for Iterative Deepening
 	ai_thread.start(_threaded_ai_search.bind(AI_DEPTH))
 
-func _threaded_ai_search(depth: int):
+func _threaded_ai_search(max_depth: int):
 	# This function runs on a separate thread
-	print("\nComputer is thinking (depth %d)..." % depth)
+	print("\nComputer is thinking (Iterative Deepening, max depth %d)..." % max_depth)
 	var start_time = Time.get_ticks_msec()
 	
-	# Heavy calculation here:
-	# Note: board.get_best_move needs to be thread-safe regarding the scene tree.
-	# Since it's a C++ function on the board instance and we aren't modifying
-	# the scene tree during this time (input is blocked), it should be safe.
-	var best_move = board.get_best_move(depth)
+	# Use Iterative Deepening Search
+	# This searches depth 1, then depth 2, then depth 3, etc. up to max_depth
+	# Each iteration populates the Transposition Table, which improves
+	# move ordering for the next iteration (TT best move searched first)
+	var best_move = board.run_iterative_deepening(max_depth)
 	
 	var elapsed = Time.get_ticks_msec() - start_time
-	print("Computer found move in %d ms" % elapsed)
+	
+	# Report the depth actually reached
+	var actual_depth = best_move.get("depth", 0)
+	print("Computer completed search to depth %d in %d ms" % [actual_depth, elapsed])
 	
 	# Hand the result back to the main thread safely
 	call_deferred("_on_ai_search_complete", best_move)
@@ -413,13 +416,14 @@ func _on_ai_search_complete(best_move: Dictionary):
 	var from_square: int = best_move["from"]
 	var to_square: int = best_move["to"]
 	var score: int = best_move["score"]
+	var depth: int = best_move.get("depth", 0)
 	
 	var from_grid = square_to_grid(from_square)
 	var to_grid = square_to_grid(to_square)
 	
 	var from_alg = board.square_to_algebraic(from_square)
 	var to_alg = board.square_to_algebraic(to_square)
-	print("Computer plays: %s%s (score: %d)" % [from_alg, to_alg, score])
+	print("Computer plays: %s%s (score: %d, depth: %d)" % [from_alg, to_alg, score, depth])
 	
 	# Apply the move on the main thread
 	board.make_move(from_square, to_square)
