@@ -120,6 +120,10 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("coords_to_pos", "rank", "file"), &Board::coords_to_pos);
     ClassDB::bind_method(D_METHOD("square_to_algebraic", "pos"), &Board::square_to_algebraic);
     ClassDB::bind_method(D_METHOD("algebraic_to_square", "algebraic"), &Board::algebraic_to_square);
+    
+    // NEW AI BINDINGS
+    ClassDB::bind_method(D_METHOD("evaluate_board"), &Board::evaluate_board);
+    ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &Board::get_best_move);
 }
 
 // ==================== BOARD SETUP ====================
@@ -722,6 +726,209 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     turn = 1 - turn;
 }
 
+// ==================== AI EVALUATION AND MINIMAX ====================
+
+int Board::evaluate_board() const {
+    int score = 0;
+    
+    for (int sq = 0; sq < 64; sq++) {
+        uint8_t piece = squares[sq];
+        if (IS_EMPTY(piece)) continue;
+        
+        int piece_value = 0;
+        switch (GET_PIECE_TYPE(piece)) {
+            case PIECE_PAWN:   piece_value = PAWN_VALUE;   break;
+            case PIECE_KNIGHT: piece_value = KNIGHT_VALUE; break;
+            case PIECE_BISHOP: piece_value = BISHOP_VALUE; break;
+            case PIECE_ROOK:   piece_value = ROOK_VALUE;   break;
+            case PIECE_QUEEN:  piece_value = QUEEN_VALUE;  break;
+            case PIECE_KING:   piece_value = 0;            break;  // King not counted in material
+        }
+        
+        // Add for White, subtract for Black
+        if (IS_WHITE(piece)) {
+            score += piece_value;
+        } else {
+            score -= piece_value;
+        }
+    }
+    
+    return score;
+}
+
+bool Board::has_legal_moves() const {
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint8_t current_color = turn;
+    
+    // We need non-const access to make/unmake moves, so use a cast
+    // This is safe because we restore the state
+    Board* self = const_cast<Board*>(this);
+    
+    // Save state
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+        
+        self->make_move_fast(m);
+        
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        bool legal = !is_square_attacked_fast(our_king, 1 - current_color);
+        
+        self->unmake_move_fast(m, ep_before, castling_before);
+        
+        if (legal) return true;
+    }
+    
+    return false;
+}
+
+int Board::minimax_internal(int depth, bool is_maximizing) {
+    // Terminal node: check for checkmate/stalemate
+    bool in_check = is_king_in_check(turn);
+    bool has_moves = has_legal_moves();
+    
+    if (!has_moves) {
+        if (in_check) {
+            // Checkmate - return large negative/positive score
+            // If current player is checkmated, that's bad for them
+            // Return score relative to who is checkmated
+            if (is_maximizing) {
+                // Maximizing player (White) is checkmated
+                return -CHECKMATE_SCORE + (100 - depth);  // Prefer later checkmates
+            } else {
+                // Minimizing player (Black) is checkmated
+                return CHECKMATE_SCORE - (100 - depth);   // Prefer earlier checkmates
+            }
+        } else {
+            // Stalemate
+            return STALEMATE_SCORE;
+        }
+    }
+    
+    // Leaf node: evaluate position
+    if (depth == 0) {
+        return evaluate_board();
+    }
+    
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint8_t current_color = turn;
+    
+    // Save state for unmake
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
+    if (is_maximizing) {
+        // White wants to maximize
+        int best_score = INT_MIN;
+        
+        for (int i = 0; i < moves.count; i++) {
+            FastMove &m = moves.moves[i];
+            
+            make_move_fast(m);
+            
+            // Check if move was legal
+            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+                int score = minimax_internal(depth - 1, false);
+                if (score > best_score) {
+                    best_score = score;
+                }
+            }
+            
+            unmake_move_fast(m, ep_before, castling_before);
+        }
+        
+        return best_score;
+    } else {
+        // Black wants to minimize
+        int best_score = INT_MAX;
+        
+        for (int i = 0; i < moves.count; i++) {
+            FastMove &m = moves.moves[i];
+            
+            make_move_fast(m);
+            
+            // Check if move was legal
+            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+                int score = minimax_internal(depth - 1, true);
+                if (score < best_score) {
+                    best_score = score;
+                }
+            }
+            
+            unmake_move_fast(m, ep_before, castling_before);
+        }
+        
+        return best_score;
+    }
+}
+
+Dictionary Board::get_best_move(int depth) {
+    Dictionary result;
+    
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint8_t current_color = turn;
+    bool is_maximizing = (turn == 0);  // White maximizes, Black minimizes
+    
+    // Save state for unmake
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
+    int best_score = is_maximizing ? INT_MIN : INT_MAX;
+    int best_from = -1;
+    int best_to = -1;
+    
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+        
+        make_move_fast(m);
+        
+        // Check if move was legal
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+            // Recursively evaluate
+            int score = minimax_internal(depth - 1, !is_maximizing);
+            
+            if (is_maximizing) {
+                if (score > best_score) {
+                    best_score = score;
+                    best_from = m.from;
+                    best_to = m.to;
+                }
+            } else {
+                if (score < best_score) {
+                    best_score = score;
+                    best_from = m.from;
+                    best_to = m.to;
+                }
+            }
+        }
+        
+        unmake_move_fast(m, ep_before, castling_before);
+    }
+    
+    // Return result
+    if (best_from >= 0) {
+        result["from"] = best_from;
+        result["to"] = best_to;
+        result["score"] = best_score;
+    }
+    
+    return result;
+}
+
 // ==================== LEGACY API IMPLEMENTATIONS ====================
 // These are kept for compatibility with the GDScript interface
 
@@ -1106,28 +1313,9 @@ String Board::move_to_notation(const Move &move) const {
 
 // ==================== PUBLIC API ====================
 
-uint8_t Board::get_turn() const { return turn; }
-
-uint8_t Board::get_piece_on_square(uint8_t pos) const {
-    if (pos >= 64) return 0;
-    return squares[pos];
-}
-
-void Board::set_piece_on_square(uint8_t pos, uint8_t piece) {
-    if (pos < 64) {
-        squares[pos] = piece;
-        if (GET_PIECE_TYPE(piece) == PIECE_KING) {
-            if (IS_WHITE(piece)) white_king_pos = pos;
-            else if (IS_BLACK(piece)) black_king_pos = pos;
-        }
-    }
-}
-
 void Board::setup_board(const String &fen_notation) {
-    if (fen_notation.is_empty()) {
+    if (!parse_fen(fen_notation)) {
         initialize_starting_position();
-    } else {
-        parse_fen(fen_notation);
     }
 }
 
@@ -1135,17 +1323,38 @@ String Board::get_fen() const {
     return generate_fen();
 }
 
+uint8_t Board::get_turn() const {
+    return turn;
+}
+
+uint8_t Board::get_piece_on_square(uint8_t pos) const {
+    if (pos >= 64) return 0;
+    return squares[pos];
+}
+
+void Board::set_piece_on_square(uint8_t pos, uint8_t piece) {
+    if (pos >= 64) return;
+    squares[pos] = piece;
+    
+    // Update king cache if setting a king
+    if (GET_PIECE_TYPE(piece) == PIECE_KING) {
+        if (IS_WHITE(piece)) white_king_pos = pos;
+        else black_king_pos = pos;
+    }
+}
+
 uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
+    if (promotion_pending) return 0;
     if (start >= 64 || end >= 64) return 0;
     
     uint8_t piece = squares[start];
     if (IS_EMPTY(piece)) return 0;
     
-    uint8_t piece_color = (GET_COLOR(piece) == COLOR_WHITE) ? 0 : 1;
-    if (piece_color != turn) return 0;
+    uint8_t color_val = GET_COLOR(piece);
+    uint8_t expected_color = (turn == 0) ? COLOR_WHITE : COLOR_BLACK;
+    if (color_val != expected_color) return 0;
     
     Array legal_moves = get_legal_moves_for_piece(start);
-    
     bool is_legal = false;
     for (int i = 0; i < legal_moves.size(); i++) {
         if ((int)legal_moves[i] == end) {
@@ -1153,7 +1362,6 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
             break;
         }
     }
-    
     if (!is_legal) return 0;
     
     uint8_t piece_type = GET_PIECE_TYPE(piece);
@@ -1163,30 +1371,33 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
         promotion_pending = true;
         promotion_pending_from = start;
         promotion_pending_to = end;
-        return 2;
+        
+        Move temp_move;
+        make_move_internal(start, end, temp_move);
+        turn = 1 - turn;  // Don't change turn until promotion is committed
+        
+        return 2;  // Promotion pending
     }
     
     Move move_record;
     make_move_internal(start, end, move_record);
-    
     move_history.push_back(move_record);
     move_history_notation.push_back(move_to_notation(move_record));
     
-    return 1;
+    return 1;  // Success
 }
 
 void Board::commit_promotion(const String &type_str) {
     if (!promotion_pending) return;
     
     uint8_t promotion_type = PIECE_QUEEN;
-    
     if (type_str.length() > 0) {
-        char32_t c = type_str.to_lower()[0];
+        char32_t c = type_str[0];
         switch (c) {
-            case 'q': promotion_type = PIECE_QUEEN; break;
-            case 'r': promotion_type = PIECE_ROOK; break;
-            case 'b': promotion_type = PIECE_BISHOP; break;
-            case 'n': promotion_type = PIECE_KNIGHT; break;
+            case 'q': case 'Q': promotion_type = PIECE_QUEEN; break;
+            case 'r': case 'R': promotion_type = PIECE_ROOK; break;
+            case 'b': case 'B': promotion_type = PIECE_BISHOP; break;
+            case 'n': case 'N': promotion_type = PIECE_KNIGHT; break;
         }
     }
     

@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstring>
+#include <climits>
 
 using namespace godot;
 
@@ -49,6 +50,17 @@ using namespace godot;
 #define DIR_NW  7
 #define DIR_SE -7
 #define DIR_SW -9
+
+// AI evaluation constants
+#define CHECKMATE_SCORE 100000
+#define STALEMATE_SCORE 0
+
+// Piece values for evaluation
+#define PAWN_VALUE   100
+#define KNIGHT_VALUE 300
+#define BISHOP_VALUE 300
+#define ROOK_VALUE   500
+#define QUEEN_VALUE  900
 
 // Lightweight move for perft - 32 bits total
 struct FastMove {
@@ -176,6 +188,13 @@ private:
     
     String move_to_notation(const Move &move) const;
 
+    // ==================== AI INTERNAL HELPERS ====================
+    // Minimax recursive helper - returns evaluation score
+    int minimax_internal(int depth, bool is_maximizing);
+    
+    // Check if current position has any legal moves
+    bool has_legal_moves() const;
+
 protected:
     static void _bind_methods();
 
@@ -185,7 +204,7 @@ public:
 
     void _ready();
     
-    // Public API (unchanged interface)
+    // Public API
     uint8_t get_turn() const;
     uint8_t get_piece_on_square(uint8_t pos) const;
     void set_piece_on_square(uint8_t pos, uint8_t piece);
@@ -205,6 +224,15 @@ public:
     uint64_t count_all_moves(uint8_t depth);
     Dictionary get_perft_analysis(uint8_t depth);
     void make_move(uint8_t start, uint8_t end);
+    
+    // ==================== NEW AI FUNCTIONS ====================
+    // Evaluates the board from White's perspective (positive = White advantage)
+    int evaluate_board() const;
+    
+    // Returns the best move found by Minimax search to given depth
+    // Returns Dictionary with keys: "from", "to", "score"
+    // If no legal moves exist, returns empty Dictionary
+    Dictionary get_best_move(int depth);
     
     // Game state queries
     bool is_checkmate(uint8_t color);

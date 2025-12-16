@@ -16,7 +16,7 @@ var play_btn: Button
 var default_btn: Button
 
 # State
-var selected_mode = "PvP" # Options: "PvP", "Perft"
+var selected_mode = "PvP" # Options: "PvP", "PvC", "Perft"
 
 func _ready():
 	# Create a CanvasLayer to ensure UI stays on top and aligned
@@ -47,7 +47,7 @@ func setup_main_menu_ui():
 	panel.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	
 	panel.anchors_preset = Control.PRESET_CENTER
-	panel.custom_minimum_size = Vector2(75, 50)
+	panel.custom_minimum_size = Vector2(85, 55)  # Slightly wider to accommodate 3 buttons
 	
 	# Center the panel
 	panel.position = Vector2(
@@ -78,6 +78,7 @@ func setup_main_menu_ui():
 	# Mode Selection Buttons
 	var mode_hbox = HBoxContainer.new()
 	mode_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_hbox.add_theme_constant_override("separation", 2)  # Add some spacing between buttons
 	
 	pvp_btn = Button.new()
 	pvp_btn.text = "P Vs P"
@@ -85,19 +86,21 @@ func setup_main_menu_ui():
 	pvp_btn.toggle_mode = true
 	pvp_btn.button_pressed = true # Default
 	pvp_btn.pressed.connect(_on_pvp_selected)
-
+	pvp_btn.tooltip_text = "Player vs Player"
+	
 	pvc_btn = Button.new()
 	pvc_btn.text = "P Vs C"
 	pvc_btn.focus_mode = Control.FOCUS_NONE
 	pvc_btn.toggle_mode = true
-	pvc_btn.button_pressed = false # Default
 	pvc_btn.pressed.connect(_on_pvc_selected)
+	pvc_btn.tooltip_text = "Player vs Computer"
 	
 	perft_btn = Button.new()
 	perft_btn.text = "Perft"
 	perft_btn.focus_mode = Control.FOCUS_NONE
 	perft_btn.toggle_mode = true
 	perft_btn.pressed.connect(_on_perft_selected)
+	perft_btn.tooltip_text = "Performance Test Analysis"
 	
 	mode_hbox.add_child(pvp_btn)
 	mode_hbox.add_child(pvc_btn)
@@ -129,6 +132,7 @@ func setup_main_menu_ui():
 	default_btn.text = "Default"
 	default_btn.focus_mode = Control.FOCUS_NONE
 	default_btn.pressed.connect(_on_default_pressed)
+	default_btn.tooltip_text = "Paste the default position"
 	bottom_hbox.add_child(default_btn)
 	
 	# Spacer to push Play button to the right
@@ -179,19 +183,20 @@ func _on_play_pressed():
 	
 	var target_scene_path = ""
 	
-	if selected_mode == "PvP":
-		target_scene_path = "res://scenes/player_vs_player.tscn"
-	elif selected_mode == "PvC":
-		target_scene_path = "res://scenes/player_vs_computer.tscn"
-	else:
-		target_scene_path = "res://scenes/perft_analysis.tscn"
+	match selected_mode:
+		"PvP":
+			target_scene_path = "res://scenes/player_vs_player.tscn"
+		"PvC":
+			target_scene_path = "res://scenes/player_vs_computer.tscn"
+		"Perft":
+			target_scene_path = "res://scenes/perft_analysis.tscn"
 	
 	# Verify file exists before changing to avoid crash
 	if ResourceLoader.exists(target_scene_path):
 		get_tree().change_scene_to_file(target_scene_path)
 	else:
 		print("Error: Scene file not found at " + target_scene_path)
-		print("Please ensure you have saved the scenes as PlayerVsPlayer.tscn and PerftAnalysis.tscn")
+		print("Please ensure you have saved the scene.")
 
 # Handle window resize to keep panel centered
 func _process(_delta):
