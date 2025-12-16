@@ -15,3 +15,5 @@ src/*.obj
 *.lib
 *.exp
 *.dblite
+*.os
+*.so
