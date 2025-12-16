@@ -19,7 +19,7 @@ const COLOR_MASK = 24
 
 # --- PERFT CONFIGURATION ---
 # Higher depths will result in significantly longer processing times per move
-@export var perft_max_depth: int = 5	
+@export var perft_max_depth: int = 5
 
 var board: Board
 var sprites = {} 
@@ -175,7 +175,8 @@ func _input(event):
 						pending_promotion_move_start = move_start
 						pending_promotion_move_end = move_end
 						refresh_visuals()
-						var piece_data = get_data_at(clicked_pos)
+						
+						var piece_data = get_data_at(move_start)
 						start_promotion(piece_data)
 				else:
 					var p = get_data_at(clicked_pos)

@@ -232,7 +232,8 @@ func _input(event):
 						pending_promotion_move_start = move_start
 						pending_promotion_move_end = move_end
 						refresh_visuals()
-						var piece_data = get_data_at(clicked_pos)
+						
+						var piece_data = get_data_at(move_start)
 						start_promotion(piece_data)
 				else:
 					# Clicked invalid target; check if selecting friendly piece

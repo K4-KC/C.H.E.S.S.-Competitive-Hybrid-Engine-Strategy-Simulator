@@ -1830,10 +1830,6 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
         promotion_pending_from = start;
         promotion_pending_to = end;
         
-        Move temp_move;
-        make_move_internal(start, end, temp_move);
-        turn = 1 - turn;
-        hash_side();  // Undo the side change from make_move_internal
         
         return 2;
     }
@@ -1864,8 +1860,6 @@ void Board::commit_promotion(const String &type_str) {
     uint8_t color = GET_COLOR(piece);
     
     Move move_record;
-    move_record.hash_before = current_hash;  // Store current hash before changes
-    hash_side();  // Re-apply side change
     
     make_move_internal(promotion_pending_from, promotion_pending_to, move_record);
     
