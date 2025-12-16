@@ -189,8 +189,10 @@ private:
     String move_to_notation(const Move &move) const;
 
     // ==================== AI INTERNAL HELPERS ====================
-    // Minimax recursive helper - returns evaluation score
-    int minimax_internal(int depth, bool is_maximizing);
+    // Minimax with Alpha-Beta pruning - returns evaluation score
+    // alpha: best score the maximizer can guarantee (lower bound)
+    // beta: best score the minimizer can guarantee (upper bound)
+    int minimax_internal(int depth, int alpha, int beta, bool is_maximizing);
     
     // Check if current position has any legal moves
     bool has_legal_moves() const;
@@ -204,7 +206,7 @@ public:
 
     void _ready();
     
-    // Public API
+    // Public API (unchanged interface)
     uint8_t get_turn() const;
     uint8_t get_piece_on_square(uint8_t pos) const;
     void set_piece_on_square(uint8_t pos, uint8_t piece);
@@ -225,11 +227,11 @@ public:
     Dictionary get_perft_analysis(uint8_t depth);
     void make_move(uint8_t start, uint8_t end);
     
-    // ==================== NEW AI FUNCTIONS ====================
+    // ==================== AI FUNCTIONS ====================
     // Evaluates the board from White's perspective (positive = White advantage)
     int evaluate_board() const;
     
-    // Returns the best move found by Minimax search to given depth
+    // Returns the best move found by Minimax search with Alpha-Beta pruning
     // Returns Dictionary with keys: "from", "to", "score"
     // If no legal moves exist, returns empty Dictionary
     Dictionary get_best_move(int depth);

@@ -121,7 +121,7 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("square_to_algebraic", "pos"), &Board::square_to_algebraic);
     ClassDB::bind_method(D_METHOD("algebraic_to_square", "algebraic"), &Board::algebraic_to_square);
     
-    // NEW AI BINDINGS
+    // AI BINDINGS
     ClassDB::bind_method(D_METHOD("evaluate_board"), &Board::evaluate_board);
     ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &Board::get_best_move);
 }
@@ -726,7 +726,7 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     turn = 1 - turn;
 }
 
-// ==================== AI EVALUATION AND MINIMAX ====================
+// ==================== AI EVALUATION AND MINIMAX WITH ALPHA-BETA ====================
 
 int Board::evaluate_board() const {
     int score = 0;
@@ -787,7 +787,10 @@ bool Board::has_legal_moves() const {
     return false;
 }
 
-int Board::minimax_internal(int depth, bool is_maximizing) {
+// Minimax with Alpha-Beta Pruning
+// alpha: the best score the maximizer can guarantee at this level or above
+// beta: the best score the minimizer can guarantee at this level or above
+int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) {
     // Terminal node: check for checkmate/stalemate
     bool in_check = is_king_in_check(turn);
     bool has_moves = has_legal_moves();
@@ -795,8 +798,6 @@ int Board::minimax_internal(int depth, bool is_maximizing) {
     if (!has_moves) {
         if (in_check) {
             // Checkmate - return large negative/positive score
-            // If current player is checkmated, that's bad for them
-            // Return score relative to who is checkmated
             if (is_maximizing) {
                 // Maximizing player (White) is checkmated
                 return -CHECKMATE_SCORE + (100 - depth);  // Prefer later checkmates
@@ -837,9 +838,21 @@ int Board::minimax_internal(int depth, bool is_maximizing) {
             // Check if move was legal
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, false);
+                int score = minimax_internal(depth - 1, alpha, beta, false);
+                
                 if (score > best_score) {
                     best_score = score;
+                }
+                
+                // Alpha-Beta pruning: update alpha
+                if (score > alpha) {
+                    alpha = score;
+                }
+                
+                // Beta cutoff: minimizer has a better option elsewhere
+                if (score >= beta) {
+                    unmake_move_fast(m, ep_before, castling_before);
+                    break;  // Prune remaining moves
                 }
             }
             
@@ -859,9 +872,21 @@ int Board::minimax_internal(int depth, bool is_maximizing) {
             // Check if move was legal
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, true);
+                int score = minimax_internal(depth - 1, alpha, beta, true);
+                
                 if (score < best_score) {
                     best_score = score;
+                }
+                
+                // Alpha-Beta pruning: update beta
+                if (score < beta) {
+                    beta = score;
+                }
+                
+                // Alpha cutoff: maximizer has a better option elsewhere
+                if (score <= alpha) {
+                    unmake_move_fast(m, ep_before, castling_before);
+                    break;  // Prune remaining moves
                 }
             }
             
@@ -886,6 +911,10 @@ Dictionary Board::get_best_move(int depth) {
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
     
+    // Initialize alpha and beta for the root
+    int alpha = INT_MIN;
+    int beta = INT_MAX;
+    
     int best_score = is_maximizing ? INT_MIN : INT_MAX;
     int best_from = -1;
     int best_to = -1;
@@ -898,8 +927,8 @@ Dictionary Board::get_best_move(int depth) {
         // Check if move was legal
         uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-            // Recursively evaluate
-            int score = minimax_internal(depth - 1, !is_maximizing);
+            // Recursively evaluate with alpha-beta bounds
+            int score = minimax_internal(depth - 1, alpha, beta, !is_maximizing);
             
             if (is_maximizing) {
                 if (score > best_score) {
@@ -907,11 +936,19 @@ Dictionary Board::get_best_move(int depth) {
                     best_from = m.from;
                     best_to = m.to;
                 }
+                // Update alpha at root level for pruning benefit
+                if (score > alpha) {
+                    alpha = score;
+                }
             } else {
                 if (score < best_score) {
                     best_score = score;
                     best_from = m.from;
                     best_to = m.to;
+                }
+                // Update beta at root level for pruning benefit
+                if (score < beta) {
+                    beta = score;
                 }
             }
         }
