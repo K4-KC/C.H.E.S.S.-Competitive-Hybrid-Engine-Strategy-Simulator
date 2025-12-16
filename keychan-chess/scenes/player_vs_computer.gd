@@ -37,6 +37,7 @@ var ai_color: int = 1      # Computer plays the opposite color
 
 # AI state
 var ai_thinking: bool = false
+var ai_thread: Thread = null # Thread for background calculation
 
 # Temporary visual helpers
 var highlight_sprites = []
@@ -107,8 +108,6 @@ func _ready():
 	print(start_fen)
 	
 	# If it's the AI's turn to start (e.g., FEN starts with Black to move and player is Black)
-	# Actually, we set player_color to whoever moves first, so AI should never start
-	# But in case someone modifies this, let's handle it:
 	if board.get_turn() == ai_color:
 		call_deferred("make_ai_move")
 
@@ -225,9 +224,9 @@ func _input(event):
 						record_fen()
 						check_game_over()
 						
-						# Trigger AI move after a brief delay
+						# Trigger AI move
 						if not board.is_game_over():
-							call_deferred("make_ai_move")
+							make_ai_move()
 					elif result == 2:
 						# Promotion pending
 						pending_promotion_move_start = move_start
@@ -352,9 +351,9 @@ func _on_promotion_selected(type):
 	
 	# Trigger AI move after player promotion
 	if not board.is_game_over():
-		call_deferred("make_ai_move")
+		make_ai_move()
 
-# --- AI Move Logic ---
+# --- AI Move Logic (Threaded) ---
 
 func make_ai_move():
 	if board.is_game_over():
@@ -362,21 +361,46 @@ func make_ai_move():
 	
 	if board.get_turn() != ai_color:
 		return
+		
+	# Prevent starting multiple threads
+	if ai_thinking:
+		return
 	
 	ai_thinking = true
 	thinking_label.visible = true
 	
-	# Let UI update before expensive calculation
-	await get_tree().process_frame
+	# Clean up any existing thread (sanity check)
+	cleanup_thread()
 	
-	print("\nComputer is thinking (depth %d)..." % AI_DEPTH)
+	# Create and start the thread
+	ai_thread = Thread.new()
+	# We pass the depth to the thread function
+	ai_thread.start(_threaded_ai_search.bind(AI_DEPTH))
+
+func _threaded_ai_search(depth: int):
+	# This function runs on a separate thread
+	print("\nComputer is thinking (depth %d)..." % depth)
 	var start_time = Time.get_ticks_msec()
 	
-	# Call the C++ Minimax function
-	var best_move = board.get_best_move(AI_DEPTH)
+	# Heavy calculation here:
+	# Note: board.get_best_move needs to be thread-safe regarding the scene tree.
+	# Since it's a C++ function on the board instance and we aren't modifying
+	# the scene tree during this time (input is blocked), it should be safe.
+	var best_move = board.get_best_move(depth)
 	
 	var elapsed = Time.get_ticks_msec() - start_time
 	print("Computer found move in %d ms" % elapsed)
+	
+	# Hand the result back to the main thread safely
+	call_deferred("_on_ai_search_complete", best_move)
+
+func _on_ai_search_complete(best_move: Dictionary):
+	# This function runs on the main thread
+	
+	# Wait for the thread to finish cleanly
+	if ai_thread != null:
+		ai_thread.wait_to_finish()
+		ai_thread = null
 	
 	thinking_label.visible = false
 	ai_thinking = false
@@ -397,7 +421,7 @@ func make_ai_move():
 	var to_alg = board.square_to_algebraic(to_square)
 	print("Computer plays: %s%s (score: %d)" % [from_alg, to_alg, score])
 	
-	# Make the move
+	# Apply the move on the main thread
 	board.make_move(from_square, to_square)
 	
 	update_last_move_visuals(from_grid, to_grid)
@@ -405,9 +429,23 @@ func make_ai_move():
 	record_fen()
 	check_game_over()
 
+func cleanup_thread():
+	if ai_thread != null:
+		if ai_thread.is_started():
+			ai_thread.wait_to_finish()
+		ai_thread = null
+
+func _exit_tree():
+	# Ensure thread is cleaned up if scene is changed/quit
+	cleanup_thread()
+
 # --- Undo / History ---
 
 func revert_last_move():
+	# Block undo while AI is thinking
+	if ai_thinking:
+		return
+
 	# In PvC mode, we revert TWO moves (player + AI) to get back to player's turn
 	var moves = board.get_moves()
 	if moves.size() == 0:
