@@ -707,13 +707,10 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
         }
     }
     
-    // Restore king position
-    if (piece_type == PIECE_KING || promo_piece) {
-        // If it was originally a king move
-        if (GET_PIECE_TYPE(squares[m.from]) == PIECE_KING) {
-            if (color == COLOR_WHITE) white_king_pos = m.from;
-            else black_king_pos = m.from;
-        }
+    // Restore king position if this was a king move
+    if (piece_type == PIECE_KING) {
+        if (color == COLOR_WHITE) white_king_pos = m.from;
+        else black_king_pos = m.from;
     }
     
     // Restore castling rights
@@ -1367,7 +1364,6 @@ uint64_t Board::count_all_moves(uint8_t depth) {
     
     uint64_t nodes = 0;
     uint8_t current_color = turn;
-    uint8_t king_pos = (current_color == 0) ? white_king_pos : black_king_pos;
     
     // Save state for unmake
     uint8_t ep_before = en_passant_target;
@@ -1398,12 +1394,11 @@ Dictionary Board::get_perft_analysis(uint8_t depth) {
     generate_all_pseudo_legal(moves);
 
     uint8_t current_color = turn;
-    uint8_t king_pos = (current_color == 0) ? white_king_pos
-                                             : black_king_pos;
     // Save state for unmake
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
     for (int i = 0; i < moves.count; i++) {
         FastMove &m = moves.moves[i];
 
@@ -1414,6 +1409,18 @@ Dictionary Board::get_perft_analysis(uint8_t depth) {
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
             uint64_t nodes = count_all_moves(depth - 1);
             String move_notation = square_to_algebraic(m.from) + square_to_algebraic(m.to);
+            
+            // Append promotion piece to notation (UCI format: e7e8q)
+            uint8_t promo_piece = (m.flags >> 3) & 7;
+            if (promo_piece) {
+                switch (promo_piece) {
+                    case PIECE_QUEEN:  move_notation += "q"; break;
+                    case PIECE_ROOK:   move_notation += "r"; break;
+                    case PIECE_BISHOP: move_notation += "b"; break;
+                    case PIECE_KNIGHT: move_notation += "n"; break;
+                }
+            }
+            
             result[move_notation] = nodes;
         }
 
