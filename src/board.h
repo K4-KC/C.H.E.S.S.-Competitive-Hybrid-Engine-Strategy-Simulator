@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <climits>
+#include <algorithm>
 
 using namespace godot;
 
@@ -55,19 +56,26 @@ using namespace godot;
 #define CHECKMATE_SCORE 100000
 #define STALEMATE_SCORE 0
 
-// Piece values for evaluation
+// Piece values for evaluation (centipawns)
 #define PAWN_VALUE   100
 #define KNIGHT_VALUE 300
 #define BISHOP_VALUE 300
 #define ROOK_VALUE   500
 #define QUEEN_VALUE  900
 
-// Lightweight move for perft - 32 bits total
+// Move ordering score constants
+#define SCORE_QUEEN_PROMOTION    20000
+#define SCORE_CAPTURE_BASE       10000
+#define SCORE_OTHER_PROMOTION    9000
+#define SCORE_QUIET_MOVE         0
+
+// Lightweight move for perft and search - now includes score for ordering
 struct FastMove {
     uint8_t from;
     uint8_t to;
     uint8_t flags;  // bit 0: capture, bit 1: ep, bit 2: castling, bits 3-5: promotion piece
     uint8_t captured;
+    int16_t score;  // Move ordering score (higher = search first)
 };
 
 // Full move structure for game history
@@ -90,7 +98,7 @@ struct MoveList {
     
     inline void clear() { count = 0; }
     inline void add(uint8_t from, uint8_t to, uint8_t flags = 0, uint8_t captured = 0) {
-        moves[count++] = {from, to, flags, captured};
+        moves[count++] = {from, to, flags, captured, 0};
     }
 };
 
@@ -128,7 +136,7 @@ private:
     // ==================== PRECOMPUTED TABLES ====================
     // These are initialized once at startup
     
-    // Attack tables for knights and kings (bitmask would be better but this works)
+    // Attack tables for knights and kings
     static bool knight_attacks_initialized;
     static uint8_t knight_attack_squares[64][8];
     static uint8_t knight_attack_count[64];
@@ -138,7 +146,12 @@ private:
     // Squares to edge in each direction (for sliding pieces)
     static uint8_t squares_to_edge[64][8];  // N, S, E, W, NE, NW, SE, SW
     
+    // MVV-LVA lookup table: [victim_type][attacker_type] -> score
+    // Higher score = better capture (search first)
+    static int16_t mvv_lva_table[7][7];
+    
     static void init_attack_tables();
+    static void init_mvv_lva_table();
     
     // ==================== INTERNAL HELPERS ====================
     void clear_board();
@@ -189,9 +202,17 @@ private:
     String move_to_notation(const Move &move) const;
 
     // ==================== AI INTERNAL HELPERS ====================
+    // Score a move for ordering (higher = search first)
+    // Uses MVV-LVA for captures, promotion bonuses, etc.
+    int16_t score_move(const FastMove &m) const;
+    
+    // Score all moves in a MoveList for ordering
+    void score_moves(MoveList &moves) const;
+    
+    // Sort moves by score (descending - highest first)
+    void sort_moves(MoveList &moves) const;
+    
     // Minimax with Alpha-Beta pruning - returns evaluation score
-    // alpha: best score the maximizer can guarantee (lower bound)
-    // beta: best score the minimizer can guarantee (upper bound)
     int minimax_internal(int depth, int alpha, int beta, bool is_maximizing);
     
     // Check if current position has any legal moves
@@ -252,6 +273,19 @@ public:
     // Inline helper for fast king lookup
     inline uint8_t get_king_pos(uint8_t color) const {
         return (color == 0) ? white_king_pos : black_king_pos;
+    }
+    
+    // Get piece value for MVV-LVA (exposed for potential future use)
+    static inline int get_piece_value(uint8_t piece_type) {
+        switch (piece_type) {
+            case PIECE_PAWN:   return PAWN_VALUE;
+            case PIECE_KNIGHT: return KNIGHT_VALUE;
+            case PIECE_BISHOP: return BISHOP_VALUE;
+            case PIECE_ROOK:   return ROOK_VALUE;
+            case PIECE_QUEEN:  return QUEEN_VALUE;
+            case PIECE_KING:   return 0;  // King can't be captured normally
+            default:          return 0;
+        }
     }
 };
 

@@ -2,6 +2,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <cstring>
+#include <algorithm>
 
 using namespace godot;
 
@@ -13,6 +14,7 @@ uint8_t Board::knight_attack_count[64];
 uint8_t Board::king_attack_squares[64][8];
 uint8_t Board::king_attack_count[64];
 uint8_t Board::squares_to_edge[64][8];
+int16_t Board::mvv_lva_table[7][7];
 
 // Knight move offsets: {file_delta, rank_delta}
 static const int KNIGHT_DELTAS[8][2] = {
@@ -28,6 +30,10 @@ static const int KING_DELTAS[8][2] = {
 
 // Direction offsets (N, S, E, W, NE, NW, SE, SW)
 static const int DIR_OFFSETS[8] = {8, -8, 1, -1, 9, 7, -7, -9};
+
+// Piece values for MVV-LVA scoring (index by piece type)
+// Index: NONE=0, PAWN=1, KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5, KING=6
+static const int MVV_LVA_PIECE_VALUES[7] = {0, 100, 300, 300, 500, 900, 10000};
 
 void Board::init_attack_tables() {
     if (knight_attacks_initialized) return;
@@ -68,7 +74,30 @@ void Board::init_attack_tables() {
         squares_to_edge[sq][7] = (rank < file) ? rank : file;                   // SW
     }
     
+    // Initialize MVV-LVA table
+    init_mvv_lva_table();
+    
     knight_attacks_initialized = true;
+}
+
+// Initialize the MVV-LVA (Most Valuable Victim - Least Valuable Attacker) table
+// Formula: score = victim_value * 10 - attacker_value
+// This ensures captures of more valuable pieces are searched first,
+// and among captures of the same piece, using a less valuable attacker is preferred
+void Board::init_mvv_lva_table() {
+    for (int victim = 0; victim < 7; victim++) {
+        for (int attacker = 0; attacker < 7; attacker++) {
+            if (victim == PIECE_NONE || attacker == PIECE_NONE) {
+                mvv_lva_table[victim][attacker] = 0;
+            } else {
+                // victim_value * 10 - attacker_value gives us proper ordering
+                // PxQ = 9000 - 100 = 8900 (best)
+                // QxP = 1000 - 900 = 100  (worst capture, but still better than quiet moves)
+                mvv_lva_table[victim][attacker] = 
+                    MVV_LVA_PIECE_VALUES[victim] * 10 - MVV_LVA_PIECE_VALUES[attacker];
+            }
+        }
+    }
 }
 
 // ==================== CONSTRUCTOR/DESTRUCTOR ====================
@@ -371,7 +400,6 @@ bool Board::is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const 
     }
     
     // Check sliding pieces (rook/queen on straights, bishop/queen on diagonals)
-    // Directions: N(0), S(1), E(2), W(3), NE(4), NW(5), SE(6), SW(7)
     for (int dir = 0; dir < 8; dir++) {
         int offset = DIR_OFFSETS[dir];
         int dist = squares_to_edge[pos][dir];
@@ -726,6 +754,71 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     turn = 1 - turn;
 }
 
+// ==================== MOVE ORDERING ====================
+
+// Score a move for ordering using MVV-LVA and promotion bonuses
+// Higher scores are searched first for better alpha-beta pruning
+int16_t Board::score_move(const FastMove &m) const {
+    int16_t score = 0;
+    
+    uint8_t promo_piece = (m.flags >> 3) & 7;
+    bool is_capture = (m.flags & 1) || (m.flags & 2);  // Regular capture or en passant
+    
+    // Promotion scoring
+    if (promo_piece) {
+        if (promo_piece == PIECE_QUEEN) {
+            score = SCORE_QUEEN_PROMOTION;  // Queen promotion is highest priority
+        } else {
+            // Under-promotions are less common but can be important
+            score = SCORE_OTHER_PROMOTION + promo_piece * 10;
+        }
+        
+        // Add MVV-LVA bonus if it's also a capture
+        if (is_capture) {
+            uint8_t victim_type = GET_PIECE_TYPE(m.captured);
+            // For promotion captures, attacker is effectively a pawn
+            score += mvv_lva_table[victim_type][PIECE_PAWN];
+        }
+    }
+    // Capture scoring using MVV-LVA
+    else if (is_capture) {
+        uint8_t victim_type = GET_PIECE_TYPE(m.captured);
+        uint8_t attacker_type = GET_PIECE_TYPE(squares[m.from]);
+        
+        // Base capture score ensures all captures are searched before quiet moves
+        score = SCORE_CAPTURE_BASE + mvv_lva_table[victim_type][attacker_type];
+    }
+    // Quiet moves get base score (0)
+    // Future enhancement: could add killer move bonus, history heuristic, etc.
+    else {
+        score = SCORE_QUIET_MOVE;
+        
+        // Small bonus for castling (generally a good move)
+        if (m.flags & 4) {
+            score = 50;
+        }
+    }
+    
+    return score;
+}
+
+// Score all moves in a MoveList
+void Board::score_moves(MoveList &moves) const {
+    for (int i = 0; i < moves.count; i++) {
+        moves.moves[i].score = score_move(moves.moves[i]);
+    }
+}
+
+// Sort moves by score in descending order (highest score first)
+// Uses std::sort with a custom comparator
+void Board::sort_moves(MoveList &moves) const {
+    std::sort(moves.moves, moves.moves + moves.count,
+        [](const FastMove &a, const FastMove &b) {
+            return a.score > b.score;  // Descending order
+        }
+    );
+}
+
 // ==================== AI EVALUATION AND MINIMAX WITH ALPHA-BETA ====================
 
 int Board::evaluate_board() const {
@@ -742,7 +835,7 @@ int Board::evaluate_board() const {
             case PIECE_BISHOP: piece_value = BISHOP_VALUE; break;
             case PIECE_ROOK:   piece_value = ROOK_VALUE;   break;
             case PIECE_QUEEN:  piece_value = QUEEN_VALUE;  break;
-            case PIECE_KING:   piece_value = 0;            break;  // King not counted in material
+            case PIECE_KING:   piece_value = 0;            break;
         }
         
         // Add for White, subtract for Black
@@ -762,11 +855,8 @@ bool Board::has_legal_moves() const {
     
     uint8_t current_color = turn;
     
-    // We need non-const access to make/unmake moves, so use a cast
-    // This is safe because we restore the state
     Board* self = const_cast<Board*>(this);
     
-    // Save state
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
@@ -787,9 +877,7 @@ bool Board::has_legal_moves() const {
     return false;
 }
 
-// Minimax with Alpha-Beta Pruning
-// alpha: the best score the maximizer can guarantee at this level or above
-// beta: the best score the minimizer can guarantee at this level or above
+// Minimax with Alpha-Beta Pruning and Move Ordering
 int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) {
     // Terminal node: check for checkmate/stalemate
     bool in_check = is_king_in_check(turn);
@@ -797,16 +885,12 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
     
     if (!has_moves) {
         if (in_check) {
-            // Checkmate - return large negative/positive score
             if (is_maximizing) {
-                // Maximizing player (White) is checkmated
-                return -CHECKMATE_SCORE + (100 - depth);  // Prefer later checkmates
+                return -CHECKMATE_SCORE + (100 - depth);
             } else {
-                // Minimizing player (Black) is checkmated
-                return CHECKMATE_SCORE - (100 - depth);   // Prefer earlier checkmates
+                return CHECKMATE_SCORE - (100 - depth);
             }
         } else {
-            // Stalemate
             return STALEMATE_SCORE;
         }
     }
@@ -819,15 +903,17 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
     MoveList moves;
     generate_all_pseudo_legal(moves);
     
+    // Score and sort moves for better pruning
+    score_moves(moves);
+    sort_moves(moves);
+    
     uint8_t current_color = turn;
     
-    // Save state for unmake
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
     
     if (is_maximizing) {
-        // White wants to maximize
         int best_score = INT_MIN;
         
         for (int i = 0; i < moves.count; i++) {
@@ -835,7 +921,6 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
             
             make_move_fast(m);
             
-            // Check if move was legal
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
                 int score = minimax_internal(depth - 1, alpha, beta, false);
@@ -844,15 +929,13 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
                     best_score = score;
                 }
                 
-                // Alpha-Beta pruning: update alpha
                 if (score > alpha) {
                     alpha = score;
                 }
                 
-                // Beta cutoff: minimizer has a better option elsewhere
                 if (score >= beta) {
                     unmake_move_fast(m, ep_before, castling_before);
-                    break;  // Prune remaining moves
+                    break;  // Beta cutoff
                 }
             }
             
@@ -861,7 +944,6 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
         
         return best_score;
     } else {
-        // Black wants to minimize
         int best_score = INT_MAX;
         
         for (int i = 0; i < moves.count; i++) {
@@ -869,7 +951,6 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
             
             make_move_fast(m);
             
-            // Check if move was legal
             uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
             if (!is_square_attacked_fast(our_king, 1 - current_color)) {
                 int score = minimax_internal(depth - 1, alpha, beta, true);
@@ -878,15 +959,13 @@ int Board::minimax_internal(int depth, int alpha, int beta, bool is_maximizing) 
                     best_score = score;
                 }
                 
-                // Alpha-Beta pruning: update beta
                 if (score < beta) {
                     beta = score;
                 }
                 
-                // Alpha cutoff: maximizer has a better option elsewhere
                 if (score <= alpha) {
                     unmake_move_fast(m, ep_before, castling_before);
-                    break;  // Prune remaining moves
+                    break;  // Alpha cutoff
                 }
             }
             
@@ -903,15 +982,17 @@ Dictionary Board::get_best_move(int depth) {
     MoveList moves;
     generate_all_pseudo_legal(moves);
     
-    uint8_t current_color = turn;
-    bool is_maximizing = (turn == 0);  // White maximizes, Black minimizes
+    // Score and sort moves at root for better pruning
+    score_moves(moves);
+    sort_moves(moves);
     
-    // Save state for unmake
+    uint8_t current_color = turn;
+    bool is_maximizing = (turn == 0);
+    
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
     
-    // Initialize alpha and beta for the root
     int alpha = INT_MIN;
     int beta = INT_MAX;
     
@@ -924,10 +1005,8 @@ Dictionary Board::get_best_move(int depth) {
         
         make_move_fast(m);
         
-        // Check if move was legal
         uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-            // Recursively evaluate with alpha-beta bounds
             int score = minimax_internal(depth - 1, alpha, beta, !is_maximizing);
             
             if (is_maximizing) {
@@ -936,7 +1015,6 @@ Dictionary Board::get_best_move(int depth) {
                     best_from = m.from;
                     best_to = m.to;
                 }
-                // Update alpha at root level for pruning benefit
                 if (score > alpha) {
                     alpha = score;
                 }
@@ -946,7 +1024,6 @@ Dictionary Board::get_best_move(int depth) {
                     best_from = m.from;
                     best_to = m.to;
                 }
-                // Update beta at root level for pruning benefit
                 if (score < beta) {
                     beta = score;
                 }
@@ -956,7 +1033,6 @@ Dictionary Board::get_best_move(int depth) {
         unmake_move_fast(m, ep_before, castling_before);
     }
     
-    // Return result
     if (best_from >= 0) {
         result["from"] = best_from;
         result["to"] = best_to;
@@ -967,7 +1043,6 @@ Dictionary Board::get_best_move(int depth) {
 }
 
 // ==================== LEGACY API IMPLEMENTATIONS ====================
-// These are kept for compatibility with the GDScript interface
 
 bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color) {
     uint8_t captured = squares[to];
@@ -976,7 +1051,6 @@ bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color
     squares[to] = moving_piece;
     squares[from] = 0;
     
-    // Handle en passant
     uint8_t ep_captured = 0;
     uint8_t ep_capture_sq = 255;
     if (GET_PIECE_TYPE(moving_piece) == PIECE_PAWN && to == en_passant_target) {
@@ -986,7 +1060,6 @@ bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color
         squares[ep_capture_sq] = 0;
     }
     
-    // Temporarily update king position if needed
     uint8_t old_king_pos = (color == 0) ? white_king_pos : black_king_pos;
     if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
         if (color == 0) white_king_pos = to;
@@ -995,7 +1068,6 @@ bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color
     
     bool in_check = is_king_in_check(color);
     
-    // Restore
     if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
         if (color == 0) white_king_pos = old_king_pos;
         else black_king_pos = old_king_pos;
@@ -1238,7 +1310,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
     squares[to] = moving_piece;
     squares[from] = 0;
     
-    // Update king cache
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) white_king_pos = to;
         else black_king_pos = to;
@@ -1311,7 +1382,6 @@ void Board::revert_move_internal(const Move &move) {
         }
     }
     
-    // Update king cache
     if (GET_PIECE_TYPE(moving_piece) == PIECE_KING) {
         if (color == COLOR_WHITE) white_king_pos = move.from;
         else black_king_pos = move.from;
@@ -1373,7 +1443,6 @@ void Board::set_piece_on_square(uint8_t pos, uint8_t piece) {
     if (pos >= 64) return;
     squares[pos] = piece;
     
-    // Update king cache if setting a king
     if (GET_PIECE_TYPE(piece) == PIECE_KING) {
         if (IS_WHITE(piece)) white_king_pos = pos;
         else black_king_pos = pos;
@@ -1411,9 +1480,9 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
         
         Move temp_move;
         make_move_internal(start, end, temp_move);
-        turn = 1 - turn;  // Don't change turn until promotion is committed
+        turn = 1 - turn;
         
-        return 2;  // Promotion pending
+        return 2;
     }
     
     Move move_record;
@@ -1421,7 +1490,7 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
     move_history.push_back(move_record);
     move_history_notation.push_back(move_to_notation(move_record));
     
-    return 1;  // Success
+    return 1;
 }
 
 void Board::commit_promotion(const String &type_str) {
@@ -1613,7 +1682,6 @@ uint64_t Board::count_all_moves(uint8_t depth) {
     uint64_t nodes = 0;
     uint8_t current_color = turn;
     
-    // Save state for unmake
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
@@ -1623,7 +1691,6 @@ uint64_t Board::count_all_moves(uint8_t depth) {
         
         make_move_fast(m);
         
-        // Check if move was legal (didn't leave king in check)
         uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
             nodes += count_all_moves(depth - 1);
@@ -1635,14 +1702,12 @@ uint64_t Board::count_all_moves(uint8_t depth) {
     return nodes;
 }
 
-// Perft analysis function using count_all_moves for every possible move at depth 1
 Dictionary Board::get_perft_analysis(uint8_t depth) {
     Dictionary result;
     MoveList moves;
     generate_all_pseudo_legal(moves);
 
     uint8_t current_color = turn;
-    // Save state for unmake
     uint8_t ep_before = en_passant_target;
     bool castling_before[4];
     for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
@@ -1652,13 +1717,11 @@ Dictionary Board::get_perft_analysis(uint8_t depth) {
 
         make_move_fast(m);
 
-        // Check if move was legal (didn't leave king in check)
         uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
         if (!is_square_attacked_fast(our_king, 1 - current_color)) {
             uint64_t nodes = count_all_moves(depth - 1);
             String move_notation = square_to_algebraic(m.from) + square_to_algebraic(m.to);
             
-            // Append promotion piece to notation (UCI format: e7e8q)
             uint8_t promo_piece = (m.flags >> 3) & 7;
             if (promo_piece) {
                 switch (promo_piece) {
