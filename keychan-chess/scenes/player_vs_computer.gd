@@ -8,7 +8,7 @@ const TILE_SIZE = 16
 const BOARD_OFFSET = Vector2(8, 8)
 
 # AI Configuration
-const AI_DEPTH = 6  # Search depth for Minimax (increase for stronger play, but slower)
+const AI_DEPTH = 7  # Search depth for Minimax (increase for stronger play, but slower)
 
 # Piece type constants (must match board.h)
 const PIECE_NONE = 0
