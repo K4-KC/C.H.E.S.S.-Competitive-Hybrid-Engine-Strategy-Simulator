@@ -365,41 +365,56 @@ func _threaded_perft_analysis(data: Dictionary):
 	print("-".repeat(70))
 	print("%-8s %18s %12s %15s" % ["Depth", "Nodes", "Time (ms)", "Nodes/sec"])
 	print("-".repeat(70))
-	
+
 	var total_time = 0
-	var total_nodes = 0
-	
+	var total_nodes_cumulative = 0
+
 	for depth in range(1, data.max_depth + 1):
-		var start_time = Time.get_ticks_usec()
-		
-		# CRITICAL: Call the expensive board operation
-		# This is thread-safe because we're only reading, not modifying the board
-		var count = board.count_all_moves(depth)
-		
-		var end_time = Time.get_ticks_usec()
-		var elapsed_us = end_time - start_time
-		var elapsed_ms = elapsed_us / 1000.0
-		
-		total_time += elapsed_us
-		total_nodes += count
-		
-		var nps = 0
-		if elapsed_us > 0:
-			nps = int(count * 1000000.0 / elapsed_us)
-		
-		print("%-8d %18s %12.1f %15s" % [depth, format_number(count), elapsed_ms, format_number(nps)])
-	
+			var start_time = Time.get_ticks_usec()
+			
+			# 1. Get the Dictionary result from C++
+			var perft_results: Dictionary = board.get_perft_analysis(depth)
+			
+			# 2. Sum the values in the dictionary to get the total count for this depth
+			var count = 0
+			for move_str in perft_results:
+					count += perft_results[move_str]
+					
+			var end_time = Time.get_ticks_usec()
+			var elapsed_us = end_time - start_time
+			var elapsed_ms = elapsed_us / 1000.0
+			
+			total_time += elapsed_us
+			total_nodes_cumulative += count
+			
+			var nps = 0
+			if elapsed_us > 0:
+					nps = int(count * 1000000.0 / elapsed_us)
+			
+			print("%-8d %18s %12.1f %15s" % [depth, format_number(count), elapsed_ms, format_number(nps)])
+			
+			# Optional: Print breakdown for the final depth (useful for debugging)
+			if depth == data.max_depth:
+					print("-".repeat(70))
+					print("Detailed breakdown for depth %d:" % depth)
+					# Sorting keys for consistent output
+					var moves = perft_results.keys()
+					moves.sort() 
+					for move_str in moves:
+							print("  %s: %d" % [move_str, perft_results[move_str]])
+
 	print("-".repeat(70))
 	var total_nps = 0
 	if total_time > 0:
-		total_nps = int(total_nodes * 1000000.0 / total_time)
-	print("Total: %s nodes in %.1f ms (%s nodes/sec)" % [
-		format_number(total_nodes), 
-		total_time / 1000.0,
-		format_number(total_nps)
+			total_nps = int(total_nodes_cumulative * 1000000.0 / total_time)
+
+	print("Total (Accumulated): %s nodes in %.1f ms (%s nodes/sec)" % [
+			format_number(total_nodes_cumulative), 
+			total_time / 1000.0,
+			format_number(total_nps)
 	])
 	print("=".repeat(70) + "\n")
-	
+
 	# Signal completion back to main thread
 	call_deferred("_on_perft_analysis_complete")
 

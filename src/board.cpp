@@ -109,7 +109,7 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_moves"), &Board::get_moves);
     ClassDB::bind_method(D_METHOD("get_all_possible_moves", "color"), &Board::get_all_possible_moves);
     ClassDB::bind_method(D_METHOD("get_legal_moves_for_piece", "square"), &Board::get_legal_moves_for_piece);
-    ClassDB::bind_method(D_METHOD("count_all_moves", "depth"), &Board::count_all_moves);
+    ClassDB::bind_method(D_METHOD("get_perft_analysis", "depth"), &Board::get_perft_analysis);
     ClassDB::bind_method(D_METHOD("make_move", "start", "end"), &Board::make_move);
     ClassDB::bind_method(D_METHOD("is_checkmate", "color"), &Board::is_checkmate);
     ClassDB::bind_method(D_METHOD("is_stalemate", "color"), &Board::is_stalemate);
@@ -723,44 +723,6 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     en_passant_target = ep_before;
     
     turn = 1 - turn;
-}
-
-// ==================== PERFT IMPLEMENTATION ====================
-
-uint64_t Board::perft_internal(int depth) {
-    if (depth == 0) return 1;
-    
-    MoveList moves;
-    generate_all_pseudo_legal(moves);
-    
-    uint64_t nodes = 0;
-    uint8_t current_color = turn;
-    uint8_t king_pos = (current_color == 0) ? white_king_pos : black_king_pos;
-    
-    // Save state for unmake
-    uint8_t ep_before = en_passant_target;
-    bool castling_before[4];
-    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
-    
-    for (int i = 0; i < moves.count; i++) {
-        FastMove &m = moves.moves[i];
-        
-        make_move_fast(m);
-        
-        // Check if move was legal (didn't leave king in check)
-        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-            nodes += perft_internal(depth - 1);
-        }
-        
-        unmake_move_fast(m, ep_before, castling_before);
-    }
-    
-    return nodes;
-}
-
-uint64_t Board::count_all_moves(uint8_t depth) {
-    return perft_internal(depth);
 }
 
 // ==================== LEGACY API IMPLEMENTATIONS ====================
@@ -1395,4 +1357,68 @@ uint8_t Board::algebraic_to_square(const String &algebraic) const {
     if (file < 0 || file > 7 || rank < 0 || rank > 7) return 255;
     
     return rank * 8 + file;
+}
+
+uint64_t Board::count_all_moves(uint8_t depth) {
+    if (depth == 0) return 1;
+    
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint64_t nodes = 0;
+    uint8_t current_color = turn;
+    uint8_t king_pos = (current_color == 0) ? white_king_pos : black_king_pos;
+    
+    // Save state for unmake
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+        
+        make_move_fast(m);
+        
+        // Check if move was legal (didn't leave king in check)
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+            nodes += count_all_moves(depth - 1);
+        }
+        
+        unmake_move_fast(m, ep_before, castling_before);
+    }
+    
+    return nodes;
+}
+
+// Perft analysis function using count_all_moves for every possible move at depth 1
+Dictionary Board::get_perft_analysis(uint8_t depth) {
+    Dictionary result;
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+
+    uint8_t current_color = turn;
+    uint8_t king_pos = (current_color == 0) ? white_king_pos
+                                             : black_king_pos;
+    // Save state for unmake
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+
+        make_move_fast(m);
+
+        // Check if move was legal (didn't leave king in check)
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
+            uint64_t nodes = count_all_moves(depth - 1);
+            String move_notation = square_to_algebraic(m.from) + square_to_algebraic(m.to);
+            result[move_notation] = nodes;
+        }
+
+        unmake_move_fast(m, ep_before, castling_before);
+    }
+
+    return result;
 }

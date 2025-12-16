@@ -202,7 +202,8 @@ public:
     // AI/Analysis functions
     Array get_all_possible_moves(uint8_t color);
     Array get_legal_moves_for_piece(uint8_t square);
-    uint64_t count_all_moves(uint8_t depth);  // Changed to uint64_t for large depths
+    uint64_t count_all_moves(uint8_t depth);
+    Dictionary get_perft_analysis(uint8_t depth);
     void make_move(uint8_t start, uint8_t end);
     
     // Game state queries
