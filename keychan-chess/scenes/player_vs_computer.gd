@@ -1,14 +1,14 @@
 extends Node2D
 
 # Player vs Computer Mode
-# Human plays as the starting color (usually White from standard FEN)
-# Computer uses Minimax AI with Iterative Deepening to calculate its moves
+# Human plays as the starting color.
+# The 'NeuralNet' agent observes the 'Board' state and calculates moves.
 
 const TILE_SIZE = 16
 const BOARD_OFFSET = Vector2(8, 8)
 
 # AI Configuration
-const AI_DEPTH = 7  # Maximum search depth for Iterative Deepening
+const AI_DEPTH = 5  # Maximum search depth for Iterative Deepening
 
 # Piece type constants (must match board.h)
 const PIECE_NONE = 0
@@ -28,6 +28,7 @@ const PIECE_TYPE_MASK = 7   # 0b00111
 const COLOR_MASK = 24       # 0b11000
 
 var board: Board
+var neural_net: NeuralNet # [NEW] The AI Agent
 var sprites = {} # Map<Vector2i, Sprite2D>
 var selected_pos = null # Vector2i (grid coordinates)
 
@@ -78,8 +79,16 @@ func _ready():
 	pieces_node.name = "Pieces"
 	add_child(pieces_node)
 
+	# 1. Initialize the Board (State)
 	board = Board.new()
 	add_child(board)
+
+	# 2. [NEW] Initialize the AI Agent
+	neural_net = NeuralNet.new()
+	add_child(neural_net)
+	# 3. [NEW] Link the Agent to the Board so it can see the pieces
+	neural_net.set_board(board)
+	# Optional: Load NN weights later with neural_net.load_network("res://ai/model.onnx")
 	
 	setup_ui()
 
@@ -93,7 +102,6 @@ func _ready():
 	board.setup_board(start_fen)
 	
 	# Determine player color from the starting position
-	# The player plays whichever color moves first in the FEN
 	player_color = board.get_turn()
 	ai_color = 1 - player_color
 	
@@ -104,10 +112,10 @@ func _ready():
 	var ai_color_name = "White" if ai_color == 0 else "Black"
 	print("Player vs Computer Mode Ready.")
 	print("Player: %s | Computer: %s" % [player_color_name, ai_color_name])
-	print("AI Max Depth: %d (Iterative Deepening)" % AI_DEPTH)
+	print("AI Max Depth: %d (Iterative Deepening via NeuralNet Agent)" % AI_DEPTH)
 	print(start_fen)
 	
-	# If it's the AI's turn to start (e.g., FEN starts with Black to move and player is Black)
+	# If it's the AI's turn to start
 	if board.get_turn() == ai_color:
 		call_deferred("make_ai_move")
 
@@ -354,7 +362,7 @@ func _on_promotion_selected(type):
 	if not board.is_game_over():
 		make_ai_move()
 
-# --- AI Move Logic (Threaded with Iterative Deepening) ---
+# --- AI Move Logic (Threaded with NeuralNet Agent) ---
 
 func make_ai_move():
 	if board.is_game_over():
@@ -375,25 +383,23 @@ func make_ai_move():
 	
 	# Create and start the thread
 	ai_thread = Thread.new()
-	# Pass the max depth to the thread function for Iterative Deepening
+	# Pass the max depth to the thread function
 	ai_thread.start(_threaded_ai_search.bind(AI_DEPTH))
 
 func _threaded_ai_search(max_depth: int):
 	# This function runs on a separate thread
-	print("\nComputer is thinking (Iterative Deepening, max depth %d)..." % max_depth)
+	print("\nAgent Thinking (NeuralNet + Iterative Deepening)...")
 	var start_time = Time.get_ticks_msec()
 	
-	# Use Iterative Deepening Search
-	# This searches depth 1, then depth 2, then depth 3, etc. up to max_depth
-	# Each iteration populates the Transposition Table, which improves
-	# move ordering for the next iteration (TT best move searched first)
-	var best_move = board.run_iterative_deepening(max_depth)
+	# [CHANGED] Call the search function on the NeuralNet AGENT, not the Board.
+	# The agent handles the algorithms, heuristics, and evaluation.
+	var best_move = neural_net.run_iterative_deepening(max_depth)
 	
 	var elapsed = Time.get_ticks_msec() - start_time
 	
 	# Report the depth actually reached
 	var actual_depth = best_move.get("depth", 0)
-	print("Computer completed search to depth %d in %d ms" % [actual_depth, elapsed])
+	print("Agent completed search to depth %d in %d ms" % [actual_depth, elapsed])
 	
 	# Hand the result back to the main thread safely
 	call_deferred("_on_ai_search_complete", best_move)
@@ -426,7 +432,7 @@ func _on_ai_search_complete(best_move: Dictionary):
 	var to_alg = board.square_to_algebraic(to_square)
 	print("Computer plays: %s%s (score: %d, depth: %d)" % [from_alg, to_alg, score, depth])
 	
-	# Apply the move on the main thread
+	# Apply the move on the main thread (state update)
 	board.make_move(from_square, to_square)
 	
 	update_last_move_visuals(from_grid, to_grid)

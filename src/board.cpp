@@ -9,18 +9,12 @@ using namespace godot;
 
 // ==================== STATIC MEMBER DEFINITIONS ====================
 
-bool Board::knight_attacks_initialized = false;
+bool Board::tables_initialized = false;
 uint8_t Board::knight_attack_squares[64][8];
 uint8_t Board::knight_attack_count[64];
 uint8_t Board::king_attack_squares[64][8];
 uint8_t Board::king_attack_count[64];
 uint8_t Board::squares_to_edge[64][8];
-int16_t Board::mvv_lva_table[7][7];
-
-// Transposition Table static members
-TTEntry* Board::tt_table = nullptr;
-bool Board::tt_initialized = false;
-uint8_t Board::tt_age = 0;
 
 // Knight move offsets: {file_delta, rank_delta}
 static const int KNIGHT_DELTAS[8][2] = {
@@ -37,13 +31,10 @@ static const int KING_DELTAS[8][2] = {
 // Direction offsets (N, S, E, W, NE, NW, SE, SW)
 static const int DIR_OFFSETS[8] = {8, -8, 1, -1, 9, 7, -7, -9};
 
-// Piece values for MVV-LVA scoring
-static const int MVV_LVA_PIECE_VALUES[7] = {0, 100, 300, 300, 500, 900, 10000};
-
 // ==================== STATIC INITIALIZATION ====================
 
 void Board::init_attack_tables() {
-    if (knight_attacks_initialized) return;
+    if (tables_initialized) return;
     
     for (int sq = 0; sq < 64; sq++) {
         int file = sq % 8;
@@ -80,151 +71,7 @@ void Board::init_attack_tables() {
         squares_to_edge[sq][7] = (rank < file) ? rank : file;
     }
     
-    init_mvv_lva_table();
-    knight_attacks_initialized = true;
-}
-
-void Board::init_mvv_lva_table() {
-    for (int victim = 0; victim < 7; victim++) {
-        for (int attacker = 0; attacker < 7; attacker++) {
-            if (victim == PIECE_NONE || attacker == PIECE_NONE) {
-                mvv_lva_table[victim][attacker] = 0;
-            } else {
-                mvv_lva_table[victim][attacker] = 
-                    MVV_LVA_PIECE_VALUES[victim] * 10 - MVV_LVA_PIECE_VALUES[attacker];
-            }
-        }
-    }
-}
-
-// ==================== TRANSPOSITION TABLE ====================
-
-void Board::init_tt() {
-    if (tt_initialized) return;
-    
-    tt_table = new TTEntry[TT_SIZE];
-    memset(tt_table, 0, sizeof(TTEntry) * TT_SIZE);
-    tt_initialized = true;
-    tt_age = 0;
-}
-
-void Board::tt_clear() {
-    if (tt_table) {
-        memset(tt_table, 0, sizeof(TTEntry) * TT_SIZE);
-    }
-    tt_age = 0;
-}
-
-void Board::tt_new_search() {
-    tt_age++;
-}
-
-void Board::tt_store(uint64_t key, int score, int depth, int flag, uint8_t best_from, uint8_t best_to) {
-    if (!tt_table) return;
-    
-    // Index into table using lower bits of hash
-    size_t index = key % TT_SIZE;
-    TTEntry* entry = &tt_table[index];
-    
-    // Replacement strategy:
-    // Always replace if: empty, same position, or older/shallower entry
-    bool should_replace = 
-        entry->key == 0 ||                          // Empty slot
-        entry->key == key ||                        // Same position (update)
-        entry->age != tt_age ||                     // Entry from previous search
-        entry->depth <= depth;                      // Current search is deeper or equal
-    
-    if (should_replace) {
-        entry->key = key;
-        entry->score = static_cast<int16_t>(score);
-        entry->depth = static_cast<int8_t>(depth);
-        entry->flag = static_cast<uint8_t>(flag);
-        entry->best_from = best_from;
-        entry->best_to = best_to;
-        entry->age = tt_age;
-    }
-}
-
-TTEntry* Board::tt_probe(uint64_t key) const {
-    if (!tt_table) return nullptr;
-    
-    size_t index = key % TT_SIZE;
-    TTEntry* entry = &tt_table[index];
-    
-    // Verify the key matches (collision check)
-    if (entry->key == key) {
-        return entry;
-    }
-    
-    return nullptr;
-}
-
-// ==================== KILLER MOVES ====================
-
-void Board::clear_killers() {
-    for (int ply = 0; ply < MAX_PLY; ply++) {
-        killer_moves[ply][0].clear();
-        killer_moves[ply][1].clear();
-    }
-}
-
-void Board::store_killer(int ply, uint8_t from, uint8_t to) {
-    if (ply < 0 || ply >= MAX_PLY) return;
-    
-    // Don't store if it's already the first killer
-    if (killer_moves[ply][0].matches(from, to)) return;
-    
-    // Shift killer 1 to killer 2, store new one as killer 1
-    killer_moves[ply][1] = killer_moves[ply][0];
-    killer_moves[ply][0].set(from, to);
-}
-
-int Board::is_killer(int ply, uint8_t from, uint8_t to) const {
-    if (ply < 0 || ply >= MAX_PLY) return 0;
-    
-    if (killer_moves[ply][0].matches(from, to)) return 1;
-    if (killer_moves[ply][1].matches(from, to)) return 2;
-    return 0;
-}
-
-// ==================== HISTORY HEURISTIC ====================
-
-void Board::clear_history() {
-    memset(history_table, 0, sizeof(history_table));
-}
-
-void Board::update_history(uint8_t from, uint8_t to, int depth) {
-    if (from >= 64 || to >= 64) return;
-    
-    // Bonus is depth^2 - deeper cutoffs are more valuable
-    int32_t bonus = depth * depth;
-    
-    history_table[from][to] += bonus;
-    
-    // If history value gets too large, scale everything down
-    // This prevents overflow and allows adaptation to new positions
-    if (history_table[from][to] > HISTORY_MAX) {
-        for (int f = 0; f < 64; f++) {
-            for (int t = 0; t < 64; t++) {
-                history_table[f][t] /= 2;
-            }
-        }
-    }
-}
-
-void Board::age_history() {
-    // Decay all history values by half
-    // Can be called between iterations to favor recent information
-    for (int f = 0; f < 64; f++) {
-        for (int t = 0; t < 64; t++) {
-            history_table[f][t] /= 2;
-        }
-    }
-}
-
-int32_t Board::get_history(uint8_t from, uint8_t to) const {
-    if (from >= 64 || to >= 64) return 0;
-    return history_table[from][to];
+    tables_initialized = true;
 }
 
 // ==================== ZOBRIST HASHING ====================
@@ -235,8 +82,6 @@ int Board::get_zobrist_piece_index(uint8_t piece) const {
     uint8_t type = GET_PIECE_TYPE(piece);
     bool is_white = IS_WHITE(piece);
     
-    // type is 1-6 (PAWN to KING), we want 0-5
-    // White: 0-5, Black: 6-11
     return (type - 1) + (is_white ? 0 : 6);
 }
 
@@ -267,7 +112,6 @@ void Board::hash_side() {
 uint64_t Board::calculate_hash() const {
     uint64_t hash = 0;
     
-    // Hash all pieces
     for (int sq = 0; sq < 64; sq++) {
         uint8_t piece = squares[sq];
         if (!IS_EMPTY(piece)) {
@@ -278,20 +122,17 @@ uint64_t Board::calculate_hash() const {
         }
     }
     
-    // Hash castling rights
     for (int i = 0; i < 4; i++) {
         if (castling_rights[i]) {
             hash ^= Zobrist::castling_keys[i];
         }
     }
     
-    // Hash en passant
     if (en_passant_target < 64) {
         int file = en_passant_target % 8;
         hash ^= Zobrist::en_passant_keys[file];
     }
     
-    // Hash side to move (XOR if black to move)
     if (turn == 1) {
         hash ^= Zobrist::side_key;
     }
@@ -302,14 +143,8 @@ uint64_t Board::calculate_hash() const {
 // ==================== CONSTRUCTOR/DESTRUCTOR ====================
 
 Board::Board() {
-    // Initialize Zobrist keys first
     Zobrist::init();
-    
-    // Initialize attack tables
     init_attack_tables();
-    
-    // Initialize transposition table
-    init_tt();
     
     clear_board();
     turn = 0;
@@ -326,15 +161,9 @@ Board::Board() {
     for (int i = 0; i < 4; i++) {
         castling_rights[i] = true;
     }
-    
-    // Initialize killer moves and history
-    clear_killers();
-    clear_history();
 }
 
 Board::~Board() {
-    // Note: TT is static and shared, so we don't delete it here
-    // It will be cleaned up when the program exits
 }
 
 void Board::_ready() {
@@ -364,9 +193,6 @@ void Board::_bind_methods() {
     ClassDB::bind_method(D_METHOD("coords_to_pos", "rank", "file"), &Board::coords_to_pos);
     ClassDB::bind_method(D_METHOD("square_to_algebraic", "pos"), &Board::square_to_algebraic);
     ClassDB::bind_method(D_METHOD("algebraic_to_square", "algebraic"), &Board::algebraic_to_square);
-    ClassDB::bind_method(D_METHOD("evaluate_board"), &Board::evaluate_board);
-    ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &Board::get_best_move);
-    ClassDB::bind_method(D_METHOD("run_iterative_deepening", "max_depth"), &Board::run_iterative_deepening);
 }
 
 // ==================== BOARD SETUP ====================
@@ -429,7 +255,6 @@ void Board::initialize_starting_position() {
     white_king_pos = 4;
     black_king_pos = 60;
     
-    // Calculate initial hash
     current_hash = calculate_hash();
 }
 
@@ -512,8 +337,6 @@ bool Board::parse_fen(const String &fen) {
     }
     
     update_king_cache();
-    
-    // Calculate hash after parsing
     current_hash = calculate_hash();
     
     return true;
@@ -579,7 +402,7 @@ String Board::generate_fen() const {
     return fen;
 }
 
-// ==================== FAST ATTACK DETECTION ====================
+// ==================== ATTACK DETECTION ====================
 
 bool Board::is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const {
     uint8_t attacker_color = (attacking_color == 0) ? COLOR_WHITE : COLOR_BLACK;
@@ -652,7 +475,35 @@ bool Board::is_king_in_check(uint8_t color) const {
     return is_square_attacked_fast(king_pos, 1 - color);
 }
 
-// ==================== FAST MOVE GENERATION ====================
+bool Board::has_legal_moves() const {
+    MoveList moves;
+    generate_all_pseudo_legal(moves);
+    
+    uint8_t current_color = turn;
+    Board* self = const_cast<Board*>(this);
+    
+    uint8_t ep_before = en_passant_target;
+    bool castling_before[4];
+    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
+    uint64_t hash_before = current_hash;
+    
+    for (int i = 0; i < moves.count; i++) {
+        FastMove &m = moves.moves[i];
+        
+        self->make_move_fast(m);
+        
+        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
+        bool legal = !is_square_attacked_fast(our_king, 1 - current_color);
+        
+        self->unmake_move_fast(m, ep_before, castling_before, hash_before);
+        
+        if (legal) return true;
+    }
+    
+    return false;
+}
+
+// ==================== MOVE GENERATION ====================
 
 void Board::generate_pawn_moves(uint8_t pos, MoveList &moves) const {
     uint8_t piece = squares[pos];
@@ -848,79 +699,69 @@ void Board::generate_all_pseudo_legal(MoveList &moves) const {
     }
 }
 
-// ==================== FAST MAKE/UNMAKE WITH INCREMENTAL HASH ====================
+// ==================== FAST MAKE/UNMAKE ====================
 
 void Board::make_move_fast(const FastMove &m) {
     uint8_t moving_piece = squares[m.from];
     uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
     uint8_t color = GET_COLOR(moving_piece);
     
-    // Remove old en passant from hash
     if (en_passant_target < 64) {
         hash_en_passant(en_passant_target);
     }
     
-    // Handle en passant capture
     if (m.flags & 2) {
         int capture_sq = m.to + ((color == COLOR_WHITE) ? -8 : 8);
-        hash_piece(squares[capture_sq], capture_sq);  // Remove captured pawn from hash
+        hash_piece(squares[capture_sq], capture_sq);
         squares[capture_sq] = 0;
     }
     
-    // Handle regular capture
     if ((m.flags & 1) && !(m.flags & 2)) {
-        hash_piece(squares[m.to], m.to);  // Remove captured piece from hash
+        hash_piece(squares[m.to], m.to);
     }
     
-    // Handle castling
     if (m.flags & 4) {
         int move_dist = (int)m.to - (int)m.from;
-        if (move_dist == 2) {  // Kingside
-            hash_piece(squares[m.from + 3], m.from + 3);  // Remove rook
-            hash_piece(squares[m.from + 3], m.from + 1);  // Add rook at new position
+        if (move_dist == 2) {
+            hash_piece(squares[m.from + 3], m.from + 3);
+            hash_piece(squares[m.from + 3], m.from + 1);
             squares[m.from + 1] = squares[m.from + 3];
             squares[m.from + 3] = 0;
-        } else {  // Queenside
-            hash_piece(squares[m.from - 4], m.from - 4);  // Remove rook
-            hash_piece(squares[m.from - 4], m.from - 1);  // Add rook at new position
+        } else {
+            hash_piece(squares[m.from - 4], m.from - 4);
+            hash_piece(squares[m.from - 4], m.from - 1);
             squares[m.from - 1] = squares[m.from - 4];
             squares[m.from - 4] = 0;
         }
     }
     
-    // Remove piece from source
     hash_piece(moving_piece, m.from);
     
-    // Move the piece
     squares[m.to] = moving_piece;
     squares[m.from] = 0;
     
-    // Handle promotion
     uint8_t promo_piece = (m.flags >> 3) & 7;
     if (promo_piece) {
         squares[m.to] = MAKE_PIECE(promo_piece, color);
-        hash_piece(squares[m.to], m.to);  // Add promoted piece
+        hash_piece(squares[m.to], m.to);
     } else {
-        hash_piece(moving_piece, m.to);  // Add piece at destination
+        hash_piece(moving_piece, m.to);
     }
     
-    // Update king position
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) white_king_pos = m.to;
         else black_king_pos = m.to;
     }
     
-    // Update en passant target
     en_passant_target = 255;
     if (piece_type == PIECE_PAWN) {
         int move_dist = (int)m.to - (int)m.from;
         if (move_dist == 16 || move_dist == -16) {
             en_passant_target = (m.from + m.to) / 2;
-            hash_en_passant(en_passant_target);  // Add new en passant to hash
+            hash_en_passant(en_passant_target);
         }
     }
     
-    // Update castling rights with hash
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) {
             if (castling_rights[0]) { hash_castling(0); castling_rights[0] = false; }
@@ -936,7 +777,6 @@ void Board::make_move_fast(const FastMove &m) {
     if ((m.from == 56 || m.to == 56) && castling_rights[3]) { hash_castling(3); castling_rights[3] = false; }
     if ((m.from == 63 || m.to == 63) && castling_rights[2]) { hash_castling(2); castling_rights[2] = false; }
     
-    // Switch side
     hash_side();
     turn = 1 - turn;
 }
@@ -946,24 +786,20 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
     uint8_t color = GET_COLOR(moving_piece);
     uint8_t piece_type = GET_PIECE_TYPE(moving_piece);
     
-    // Handle promotion unmake
     uint8_t promo_piece = (m.flags >> 3) & 7;
     if (promo_piece) {
         moving_piece = MAKE_PIECE(PIECE_PAWN, color);
         piece_type = PIECE_PAWN;
     }
     
-    // Move piece back
     squares[m.from] = moving_piece;
     squares[m.to] = (m.flags & 2) ? 0 : m.captured;
     
-    // Handle en passant unmake
     if (m.flags & 2) {
         int capture_sq = m.to + ((color == COLOR_WHITE) ? -8 : 8);
         squares[capture_sq] = m.captured;
     }
     
-    // Handle castling unmake
     if (m.flags & 4) {
         int move_dist = (int)m.to - (int)m.from;
         if (move_dist == 2) {
@@ -975,509 +811,18 @@ void Board::unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling
         }
     }
     
-    // Restore king position
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) white_king_pos = m.from;
         else black_king_pos = m.from;
     }
     
-    // Restore castling rights
     for (int i = 0; i < 4; i++) castling_rights[i] = castling_before[i];
-    
-    // Restore en passant
     en_passant_target = ep_before;
-    
-    // Restore hash directly (faster than incremental undo)
     current_hash = hash_before;
-    
     turn = 1 - turn;
 }
 
-// ==================== MOVE ORDERING WITH KILLERS AND HISTORY ====================
-
-int16_t Board::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
-    // Highest priority: TT best move
-    if (m.from == tt_best_from && m.to == tt_best_to && tt_best_from != 255) {
-        return SCORE_TT_MOVE;
-    }
-    
-    int16_t score = 0;
-    uint8_t promo_piece = (m.flags >> 3) & 7;
-    bool is_capture = (m.flags & 1) || (m.flags & 2);
-    
-    // Promotions
-    if (promo_piece) {
-        if (promo_piece == PIECE_QUEEN) {
-            score = SCORE_QUEEN_PROMOTION;
-        } else {
-            score = SCORE_OTHER_PROMOTION + promo_piece * 10;
-        }
-        
-        if (is_capture) {
-            uint8_t victim_type = GET_PIECE_TYPE(m.captured);
-            score += mvv_lva_table[victim_type][PIECE_PAWN];
-        }
-    }
-    // Captures - use MVV-LVA
-    else if (is_capture) {
-        uint8_t victim_type = GET_PIECE_TYPE(m.captured);
-        uint8_t attacker_type = GET_PIECE_TYPE(squares[m.from]);
-        score = SCORE_CAPTURE_BASE + mvv_lva_table[victim_type][attacker_type];
-    }
-    // Quiet moves - check killers and history
-    else {
-        // Check killer moves
-        int killer_idx = is_killer(ply, m.from, m.to);
-        if (killer_idx == 1) {
-            score = SCORE_KILLER_1;
-        } else if (killer_idx == 2) {
-            score = SCORE_KILLER_2;
-        } else {
-            // Use history heuristic for other quiet moves
-            int32_t hist = get_history(m.from, m.to);
-            
-            // Scale history to fit in score range (0 to SCORE_HISTORY_MAX)
-            // Clamp to prevent overflow
-            if (hist > 0) {
-                // Scale history logarithmically to prevent domination
-                score = static_cast<int16_t>(std::min(static_cast<int32_t>(SCORE_HISTORY_MAX), 
-                                                       hist / 10));
-            } else {
-                score = SCORE_QUIET_MOVE;
-            }
-            
-            // Small bonus for castling
-            if (m.flags & 4) {
-                score += 50;
-            }
-        }
-    }
-    
-    return score;
-}
-
-void Board::score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
-    for (int i = 0; i < moves.count; i++) {
-        moves.moves[i].score = score_move(moves.moves[i], tt_best_from, tt_best_to, ply);
-    }
-}
-
-void Board::sort_moves(MoveList &moves) const {
-    std::sort(moves.moves, moves.moves + moves.count,
-        [](const FastMove &a, const FastMove &b) {
-            return a.score > b.score;
-        }
-    );
-}
-
-// ==================== AI EVALUATION AND MINIMAX ====================
-
-int Board::evaluate_board() const {
-    int score = 0;
-    
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece)) continue;
-        
-        int piece_value = 0;
-        switch (GET_PIECE_TYPE(piece)) {
-            case PIECE_PAWN:   piece_value = PAWN_VALUE;   break;
-            case PIECE_KNIGHT: piece_value = KNIGHT_VALUE; break;
-            case PIECE_BISHOP: piece_value = BISHOP_VALUE; break;
-            case PIECE_ROOK:   piece_value = ROOK_VALUE;   break;
-            case PIECE_QUEEN:  piece_value = QUEEN_VALUE;  break;
-            case PIECE_KING:   piece_value = 0;            break;
-        }
-        
-        if (IS_WHITE(piece)) {
-            score += piece_value;
-        } else {
-            score -= piece_value;
-        }
-    }
-    
-    return score;
-}
-
-bool Board::has_legal_moves() const {
-    MoveList moves;
-    generate_all_pseudo_legal(moves);
-    
-    uint8_t current_color = turn;
-    Board* self = const_cast<Board*>(this);
-    
-    uint8_t ep_before = en_passant_target;
-    bool castling_before[4];
-    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
-    uint64_t hash_before = current_hash;
-    
-    for (int i = 0; i < moves.count; i++) {
-        FastMove &m = moves.moves[i];
-        
-        self->make_move_fast(m);
-        
-        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-        bool legal = !is_square_attacked_fast(our_king, 1 - current_color);
-        
-        self->unmake_move_fast(m, ep_before, castling_before, hash_before);
-        
-        if (legal) return true;
-    }
-    
-    return false;
-}
-
-// Minimax with Alpha-Beta Pruning, TT, Killer Moves, and History Heuristic
-int Board::minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing) {
-    int original_alpha = alpha;
-    
-    // ==================== TT PROBE ====================
-    TTEntry* tt_entry = tt_probe(current_hash);
-    uint8_t tt_best_from = 255;
-    uint8_t tt_best_to = 255;
-    
-    if (tt_entry) {
-        // Get TT best move for move ordering (even if depth insufficient)
-        tt_best_from = tt_entry->best_from;
-        tt_best_to = tt_entry->best_to;
-        
-        // Check if we can use the stored score
-        if (tt_entry->depth >= depth) {
-            int tt_score = tt_entry->score;
-            
-            switch (tt_entry->flag) {
-                case TT_FLAG_EXACT:
-                    return tt_score;
-                case TT_FLAG_ALPHA:  // Upper bound
-                    if (tt_score <= alpha) return tt_score;
-                    if (tt_score < beta) beta = tt_score;
-                    break;
-                case TT_FLAG_BETA:   // Lower bound
-                    if (tt_score >= beta) return tt_score;
-                    if (tt_score > alpha) alpha = tt_score;
-                    break;
-            }
-        }
-    }
-    
-    // ==================== TERMINAL NODE CHECK ====================
-    bool in_check = is_king_in_check(turn);
-    bool has_moves = has_legal_moves();
-    
-    if (!has_moves) {
-        int score;
-        if (in_check) {
-            // Use ply for more accurate mate distance
-            score = is_maximizing ? (-CHECKMATE_SCORE + ply) : (CHECKMATE_SCORE - ply);
-        } else {
-            score = STALEMATE_SCORE;
-        }
-        return score;
-    }
-    
-    // ==================== LEAF NODE ====================
-    if (depth == 0) {
-        int score = evaluate_board();
-        tt_store(current_hash, score, 0, TT_FLAG_EXACT, 255, 255);
-        return score;
-    }
-    
-    // ==================== GENERATE AND SORT MOVES ====================
-    MoveList moves;
-    generate_all_pseudo_legal(moves);
-    score_moves(moves, tt_best_from, tt_best_to, ply);  // Pass ply for killer move lookup
-    sort_moves(moves);
-    
-    uint8_t current_color = turn;
-    
-    uint8_t ep_before = en_passant_target;
-    bool castling_before[4];
-    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
-    uint64_t hash_before = current_hash;
-    
-    uint8_t best_move_from = 255;
-    uint8_t best_move_to = 255;
-    
-    if (is_maximizing) {
-        int best_score = INT_MIN;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            make_move_fast(m);
-            
-            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, false);
-                
-                if (score > best_score) {
-                    best_score = score;
-                    best_move_from = m.from;
-                    best_move_to = m.to;
-                }
-                
-                if (score > alpha) {
-                    alpha = score;
-                }
-                
-                // Beta cutoff
-                if (score >= beta) {
-                    unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    
-                    // Update killer moves and history for quiet moves causing cutoff
-                    bool is_capture = (m.flags & 1) || (m.flags & 2);
-                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
-                    if (!is_capture && !is_promotion) {
-                        store_killer(ply, m.from, m.to);
-                        update_history(m.from, m.to, depth);
-                    }
-                    
-                    tt_store(current_hash, best_score, depth, TT_FLAG_BETA, best_move_from, best_move_to);
-                    return best_score;
-                }
-            }
-            
-            unmake_move_fast(m, ep_before, castling_before, hash_before);
-        }
-        
-        // Determine TT flag
-        int tt_flag = (best_score <= original_alpha) ? TT_FLAG_ALPHA : TT_FLAG_EXACT;
-        tt_store(current_hash, best_score, depth, tt_flag, best_move_from, best_move_to);
-        
-        return best_score;
-    } else {
-        int best_score = INT_MAX;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            make_move_fast(m);
-            
-            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, true);
-                
-                if (score < best_score) {
-                    best_score = score;
-                    best_move_from = m.from;
-                    best_move_to = m.to;
-                }
-                
-                if (score < beta) {
-                    beta = score;
-                }
-                
-                // Alpha cutoff
-                if (score <= alpha) {
-                    unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    
-                    // Update killer moves and history for quiet moves causing cutoff
-                    bool is_capture = (m.flags & 1) || (m.flags & 2);
-                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
-                    if (!is_capture && !is_promotion) {
-                        store_killer(ply, m.from, m.to);
-                        update_history(m.from, m.to, depth);
-                    }
-                    
-                    tt_store(current_hash, best_score, depth, TT_FLAG_ALPHA, best_move_from, best_move_to);
-                    return best_score;
-                }
-            }
-            
-            unmake_move_fast(m, ep_before, castling_before, hash_before);
-        }
-        
-        // Determine TT flag
-        int tt_flag = TT_FLAG_EXACT;
-        tt_store(current_hash, best_score, depth, tt_flag, best_move_from, best_move_to);
-        
-        return best_score;
-    }
-}
-
-Dictionary Board::get_best_move(int depth) {
-    Dictionary result;
-    
-    // Clear search tables for new search
-    clear_killers();
-    clear_history();
-    
-    // Start new search (increment TT age)
-    tt_new_search();
-    
-    MoveList moves;
-    generate_all_pseudo_legal(moves);
-    
-    // Check TT for best move hint at root
-    TTEntry* tt_entry = tt_probe(current_hash);
-    uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
-    uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
-    
-    score_moves(moves, tt_best_from, tt_best_to, 0);  // ply = 0 at root
-    sort_moves(moves);
-    
-    uint8_t current_color = turn;
-    bool is_maximizing = (turn == 0);
-    
-    uint8_t ep_before = en_passant_target;
-    bool castling_before[4];
-    for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
-    uint64_t hash_before = current_hash;
-    
-    int alpha = INT_MIN;
-    int beta = INT_MAX;
-    
-    int best_score = is_maximizing ? INT_MIN : INT_MAX;
-    int best_from = -1;
-    int best_to = -1;
-    
-    for (int i = 0; i < moves.count; i++) {
-        FastMove &m = moves.moves[i];
-        
-        make_move_fast(m);
-        
-        uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-        if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-            int score = minimax_internal(depth - 1, 1, alpha, beta, !is_maximizing);
-            
-            if (is_maximizing) {
-                if (score > best_score) {
-                    best_score = score;
-                    best_from = m.from;
-                    best_to = m.to;
-                }
-                if (score > alpha) {
-                    alpha = score;
-                }
-            } else {
-                if (score < best_score) {
-                    best_score = score;
-                    best_from = m.from;
-                    best_to = m.to;
-                }
-                if (score < beta) {
-                    beta = score;
-                }
-            }
-        }
-        
-        unmake_move_fast(m, ep_before, castling_before, hash_before);
-    }
-    
-    // Store root result in TT
-    if (best_from >= 0) {
-        tt_store(current_hash, best_score, depth, TT_FLAG_EXACT, best_from, best_to);
-        
-        result["from"] = best_from;
-        result["to"] = best_to;
-        result["score"] = best_score;
-    }
-    
-    return result;
-}
-
-// ==================== ITERATIVE DEEPENING SEARCH ====================
-
-Dictionary Board::run_iterative_deepening(int max_depth) {
-    Dictionary best_result;
-    
-    // Clear killer moves and history for new search
-    clear_killers();
-    clear_history();
-    
-    // Start new search (increment TT age once for the entire IDS)
-    tt_new_search();
-    
-    // Iterative deepening: search from depth 1 to max_depth
-    // Each iteration benefits from the TT entries stored by previous iterations
-    for (int current_depth = 1; current_depth <= max_depth; current_depth++) {
-        Dictionary result;
-        
-        MoveList moves;
-        generate_all_pseudo_legal(moves);
-        
-        // Probe TT for best move hint from previous iteration
-        TTEntry* tt_entry = tt_probe(current_hash);
-        uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
-        uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
-        
-        score_moves(moves, tt_best_from, tt_best_to, 0);  // ply = 0 at root
-        sort_moves(moves);
-        
-        uint8_t current_color = turn;
-        bool is_maximizing = (turn == 0);
-        
-        uint8_t ep_before = en_passant_target;
-        bool castling_before[4];
-        for (int i = 0; i < 4; i++) castling_before[i] = castling_rights[i];
-        uint64_t hash_before = current_hash;
-        
-        int alpha = INT_MIN;
-        int beta = INT_MAX;
-        
-        int best_score = is_maximizing ? INT_MIN : INT_MAX;
-        int best_from = -1;
-        int best_to = -1;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            make_move_fast(m);
-            
-            uint8_t our_king = (current_color == 0) ? white_king_pos : black_king_pos;
-            if (!is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(current_depth - 1, 1, alpha, beta, !is_maximizing);
-                
-                if (is_maximizing) {
-                    if (score > best_score) {
-                        best_score = score;
-                        best_from = m.from;
-                        best_to = m.to;
-                    }
-                    if (score > alpha) {
-                        alpha = score;
-                    }
-                } else {
-                    if (score < best_score) {
-                        best_score = score;
-                        best_from = m.from;
-                        best_to = m.to;
-                    }
-                    if (score < beta) {
-                        beta = score;
-                    }
-                }
-            }
-            
-            unmake_move_fast(m, ep_before, castling_before, hash_before);
-        }
-        
-        // Store result in TT for next iteration to use
-        if (best_from >= 0) {
-            tt_store(current_hash, best_score, current_depth, TT_FLAG_EXACT, best_from, best_to);
-            
-            result["from"] = best_from;
-            result["to"] = best_to;
-            result["score"] = best_score;
-            result["depth"] = current_depth;
-            
-            // Update best result with this iteration's result
-            best_result = result;
-            
-            // Early termination: if we found a checkmate, no need to search deeper
-            if (best_score >= CHECKMATE_SCORE - 100 || best_score <= -CHECKMATE_SCORE + 100) {
-                break;
-            }
-        }
-        
-        // Optionally age history between iterations to favor recent info
-        // age_history();  // Uncomment if desired
-    }
-    
-    return best_result;
-}
-
-// ==================== LEGACY API IMPLEMENTATIONS ====================
+// ==================== LEGACY API HELPERS ====================
 
 bool Board::would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color) {
     uint8_t captured = squares[to];
@@ -1720,7 +1065,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         move_record.castling_rights_before[i] = castling_rights[i];
     }
     
-    // Remove old en passant from hash
     if (en_passant_target < 64) {
         hash_en_passant(en_passant_target);
     }
@@ -1733,7 +1077,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         squares[capture_sq] = 0;
     }
     
-    // Hash out captured piece (if regular capture)
     if (!move_record.is_en_passant && !IS_EMPTY(squares[to])) {
         hash_piece(squares[to], to);
     }
@@ -1758,9 +1101,7 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         }
     }
     
-    // Hash out piece from source
     hash_piece(moving_piece, from);
-    // Hash in piece at destination
     hash_piece(moving_piece, to);
     
     squares[to] = moving_piece;
@@ -1780,7 +1121,6 @@ void Board::make_move_internal(uint8_t from, uint8_t to, Move &move_record) {
         }
     }
     
-    // Update castling rights with hash
     if (piece_type == PIECE_KING) {
         if (color == COLOR_WHITE) {
             if (castling_rights[0]) { hash_castling(0); castling_rights[0] = false; }
@@ -1902,14 +1242,12 @@ uint8_t Board::get_piece_on_square(uint8_t pos) const {
 void Board::set_piece_on_square(uint8_t pos, uint8_t piece) {
     if (pos >= 64) return;
     
-    // Update hash for old piece
     if (!IS_EMPTY(squares[pos])) {
         hash_piece(squares[pos], pos);
     }
     
     squares[pos] = piece;
     
-    // Update hash for new piece
     if (!IS_EMPTY(piece)) {
         hash_piece(piece, pos);
     }
@@ -1948,7 +1286,6 @@ uint8_t Board::attempt_move(uint8_t start, uint8_t end) {
         promotion_pending = true;
         promotion_pending_from = start;
         promotion_pending_to = end;
-        
         return 2;
     }
     
@@ -1978,13 +1315,11 @@ void Board::commit_promotion(const String &type_str) {
     uint8_t color = GET_COLOR(piece);
     
     Move move_record;
-    
     make_move_internal(promotion_pending_from, promotion_pending_to, move_record);
     
-    // Update hash for promotion
-    hash_piece(squares[promotion_pending_to], promotion_pending_to);  // Remove pawn
+    hash_piece(squares[promotion_pending_to], promotion_pending_to);
     squares[promotion_pending_to] = MAKE_PIECE(promotion_type, color);
-    hash_piece(squares[promotion_pending_to], promotion_pending_to);  // Add promoted piece
+    hash_piece(squares[promotion_pending_to], promotion_pending_to);
     
     move_record.promotion_piece = squares[promotion_pending_to];
     
@@ -2070,9 +1405,9 @@ void Board::make_move(uint8_t start, uint8_t end) {
     
     if (piece_type == PIECE_PAWN && (end_rank == 0 || end_rank == 7)) {
         uint8_t color = GET_COLOR(piece);
-        hash_piece(squares[end], end);  // Remove pawn
+        hash_piece(squares[end], end);
         squares[end] = MAKE_PIECE(PIECE_QUEEN, color);
-        hash_piece(squares[end], end);  // Add queen
+        hash_piece(squares[end], end);
         move_record.promotion_piece = squares[end];
     }
     
@@ -2110,42 +1445,7 @@ int Board::get_game_result() {
     return 0;
 }
 
-Vector2i Board::pos_to_coords(uint8_t pos) const {
-    if (pos >= 64) return Vector2i(-1, -1);
-    return Vector2i(pos / 8, pos % 8);
-}
-
-uint8_t Board::coords_to_pos(int rank, int file) const {
-    if (rank < 0 || rank > 7 || file < 0 || file > 7) return 255;
-    return rank * 8 + file;
-}
-
-String Board::square_to_algebraic(uint8_t pos) const {
-    if (pos >= 64) return "";
-    
-    int file = pos % 8;
-    int rank = pos / 8;
-    
-    String result = "";
-    result += String::chr('a' + file);
-    result += String::num_int64(rank + 1);
-    
-    return result;
-}
-
-uint8_t Board::algebraic_to_square(const String &algebraic) const {
-    if (algebraic.length() < 2) return 255;
-    
-    char32_t file_char = algebraic[0];
-    char32_t rank_char = algebraic[1];
-    
-    int file = file_char - 'a';
-    int rank = rank_char - '1';
-    
-    if (file < 0 || file > 7 || rank < 0 || rank > 7) return 255;
-    
-    return rank * 8 + file;
-}
+// ==================== PERFT ====================
 
 uint64_t Board::count_all_moves(uint8_t depth) {
     if (depth == 0) return 1;
@@ -2215,4 +1515,43 @@ Dictionary Board::get_perft_analysis(uint8_t depth) {
     }
 
     return result;
+}
+
+// ==================== UTILITY ====================
+
+Vector2i Board::pos_to_coords(uint8_t pos) const {
+    if (pos >= 64) return Vector2i(-1, -1);
+    return Vector2i(pos / 8, pos % 8);
+}
+
+uint8_t Board::coords_to_pos(int rank, int file) const {
+    if (rank < 0 || rank > 7 || file < 0 || file > 7) return 255;
+    return rank * 8 + file;
+}
+
+String Board::square_to_algebraic(uint8_t pos) const {
+    if (pos >= 64) return "";
+    
+    int file = pos % 8;
+    int rank = pos / 8;
+    
+    String result = "";
+    result += String::chr('a' + file);
+    result += String::num_int64(rank + 1);
+    
+    return result;
+}
+
+uint8_t Board::algebraic_to_square(const String &algebraic) const {
+    if (algebraic.length() < 2) return 255;
+    
+    char32_t file_char = algebraic[0];
+    char32_t rank_char = algebraic[1];
+    
+    int file = file_char - 'a';
+    int rank = rank_char - '1';
+    
+    if (file < 0 || file > 7 || rank < 0 || rank > 7) return 255;
+    
+    return rank * 8 + file;
 }

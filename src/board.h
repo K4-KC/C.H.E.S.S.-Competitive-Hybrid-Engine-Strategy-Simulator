@@ -52,88 +52,15 @@ using namespace godot;
 #define DIR_SE -7
 #define DIR_SW -9
 
-// AI evaluation constants
-#define CHECKMATE_SCORE 100000
-#define STALEMATE_SCORE 0
-
-// Piece values for evaluation (centipawns)
-#define PAWN_VALUE   100
-#define KNIGHT_VALUE 300
-#define BISHOP_VALUE 300
-#define ROOK_VALUE   500
-#define QUEEN_VALUE  900
-
-// Move ordering score constants
-#define SCORE_TT_MOVE           30000   // Transposition table best move (highest priority)
-#define SCORE_QUEEN_PROMOTION   20000
-#define SCORE_CAPTURE_BASE      10000
-#define SCORE_OTHER_PROMOTION   9000
-#define SCORE_KILLER_1          8000    // First killer move
-#define SCORE_KILLER_2          7500    // Second killer move
-#define SCORE_HISTORY_MAX       7000    // Maximum history score (scaled)
-#define SCORE_QUIET_MOVE        0
-
-// ==================== KILLER MOVES & HISTORY HEURISTIC ====================
-
-// Maximum search depth (ply from root)
-#define MAX_PLY 64
-
-// Killer move structure - stores from/to for a quiet move
-struct KillerMove {
-    uint8_t from;
-    uint8_t to;
-    
-    inline bool matches(uint8_t f, uint8_t t) const {
-        return from == f && to == t;
-    }
-    
-    inline void set(uint8_t f, uint8_t t) {
-        from = f;
-        to = t;
-    }
-    
-    inline void clear() {
-        from = 255;
-        to = 255;
-    }
-    
-    inline bool is_valid() const {
-        return from != 255;
-    }
-};
-
-// ==================== TRANSPOSITION TABLE ====================
-
-// TT Entry flags
-#define TT_FLAG_EXACT  0  // Exact score (PV node)
-#define TT_FLAG_ALPHA  1  // Upper bound (failed low)
-#define TT_FLAG_BETA   2  // Lower bound (failed high)
-
-// Transposition Table size (number of entries)
-// ~24 bytes per entry * 1M = ~24MB
-#define TT_SIZE 1048576  // 2^20 = 1,048,576 entries
-
-// Transposition Table Entry
-struct TTEntry {
-    uint64_t key;       // Full Zobrist hash for verification (handles collisions)
-    int16_t score;      // Stored evaluation score
-    int8_t depth;       // Search depth when this was stored
-    uint8_t flag;       // TT_FLAG_EXACT, TT_FLAG_ALPHA, or TT_FLAG_BETA
-    uint8_t best_from;  // Best move source square (255 if none)
-    uint8_t best_to;    // Best move target square
-    uint8_t age;        // Search age (for replacement strategy)
-    uint8_t padding;    // Padding for alignment
-};
-
 // ==================== MOVE STRUCTURES ====================
 
-// Lightweight move for perft and search
+// Lightweight move for fast operations
 struct FastMove {
     uint8_t from;
     uint8_t to;
     uint8_t flags;      // bit 0: capture, bit 1: ep, bit 2: castling, bits 3-5: promotion piece
     uint8_t captured;
-    int16_t score;      // Move ordering score (higher = search first)
+    int16_t score;      // Move ordering score (used by NeuralNet)
 };
 
 // Full move structure for game history
@@ -147,7 +74,7 @@ struct Move {
     uint8_t en_passant_target_before;
     uint8_t halfmove_clock_before;
     bool castling_rights_before[4];
-    uint64_t hash_before;  // Store hash for easy revert
+    uint64_t hash_before;
 };
 
 // Pre-allocated move list to avoid heap allocations
@@ -161,10 +88,13 @@ struct MoveList {
     }
 };
 
-// ==================== BOARD CLASS ====================
+// ==================== BOARD CLASS (STATE MANAGER) ====================
 
 class Board : public Node2D {
     GDCLASS(Board, Node2D)
+
+    // Allow NeuralNet to access private members for efficient evaluation
+    friend class NeuralNet;
 
 private:
     // Board state: 64 squares
@@ -195,80 +125,25 @@ private:
     bool promotion_pending;
     
     // ==================== ZOBRIST HASHING ====================
-    uint64_t current_hash;  // Current position hash
-    
-    // ==================== TRANSPOSITION TABLE ====================
-    static TTEntry* tt_table;           // Transposition table
-    static bool tt_initialized;         // Flag for TT initialization
-    static uint8_t tt_age;              // Current search age
-    
-    // TT helper functions
-    static void init_tt();
-    void tt_store(uint64_t key, int score, int depth, int flag, uint8_t best_from, uint8_t best_to);
-    TTEntry* tt_probe(uint64_t key) const;
-    void tt_clear();
-    void tt_new_search();  // Increment age for new search
-
-    // ==================== KILLER MOVES ====================
-    // Stores 2 killer moves per ply (quiet moves that caused beta cutoff)
-    // killer_moves[ply][0] = most recent killer
-    // killer_moves[ply][1] = second most recent killer
-    KillerMove killer_moves[MAX_PLY][2];
-    
-    // Clear all killer moves (call at start of new search)
-    void clear_killers();
-    
-    // Store a killer move at given ply (shifts old killer to slot 1)
-    void store_killer(int ply, uint8_t from, uint8_t to);
-    
-    // Check if move matches a killer at given ply (returns 1, 2, or 0)
-    int is_killer(int ply, uint8_t from, uint8_t to) const;
-    
-    // ==================== HISTORY HEURISTIC ====================
-    // Stores success counts for quiet moves indexed by [from][to]
-    // Higher values = move has been good in many positions
-    int32_t history_table[64][64];
-    
-    // Maximum history value before scaling down
-    static const int32_t HISTORY_MAX = 400000;
-    
-    // Clear history table (call at start of new search)
-    void clear_history();
-    
-    // Update history for a quiet move that caused cutoff
-    // bonus = depth * depth (deeper cutoffs are more valuable)
-    void update_history(uint8_t from, uint8_t to, int depth);
-    
-    // Age/decay history values (call between iterations if desired)
-    void age_history();
-    
-    // Get history score for a move
-    int32_t get_history(uint8_t from, uint8_t to) const;
+    uint64_t current_hash;
 
     // ==================== PRECOMPUTED TABLES ====================
-    static bool knight_attacks_initialized;
+    static bool tables_initialized;
     static uint8_t knight_attack_squares[64][8];
     static uint8_t knight_attack_count[64];
     static uint8_t king_attack_squares[64][8];
     static uint8_t king_attack_count[64];
     static uint8_t squares_to_edge[64][8];
-    static int16_t mvv_lva_table[7][7];
     
     static void init_attack_tables();
-    static void init_mvv_lva_table();
     
     // ==================== ZOBRIST HELPERS ====================
-    // Calculate full hash from scratch (used in setup)
     uint64_t calculate_hash() const;
-    
-    // Get Zobrist piece index (0-11) from piece byte
     int get_zobrist_piece_index(uint8_t piece) const;
-    
-    // Hash update helpers (XOR operations)
-    void hash_piece(uint8_t piece, uint8_t square);      // XOR piece in/out
-    void hash_castling(int right);                        // XOR castling right
-    void hash_en_passant(uint8_t ep_square);             // XOR en passant
-    void hash_side();                                     // XOR side to move
+    void hash_piece(uint8_t piece, uint8_t square);
+    void hash_castling(int right);
+    void hash_en_passant(uint8_t ep_square);
+    void hash_side();
     
     // ==================== INTERNAL HELPERS ====================
     void clear_board();
@@ -276,25 +151,6 @@ private:
     bool parse_fen(const String &fen);
     String generate_fen() const;
     void update_king_cache();
-
-    bool is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const;
-    
-    void generate_pawn_moves(uint8_t pos, MoveList &moves) const;
-    void generate_knight_moves(uint8_t pos, MoveList &moves) const;
-    void generate_bishop_moves(uint8_t pos, MoveList &moves) const;
-    void generate_rook_moves(uint8_t pos, MoveList &moves) const;
-    void generate_queen_moves(uint8_t pos, MoveList &moves) const;
-    void generate_king_moves(uint8_t pos, MoveList &moves) const;
-    void generate_castling_moves(uint8_t pos, MoveList &moves) const;
-    void generate_all_pseudo_legal(MoveList &moves) const;
-    
-    void make_move_fast(const FastMove &m);
-    void unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling_before[4], uint64_t hash_before);
-    
-    uint64_t perft_internal(int depth);
-    
-    bool is_king_in_check(uint8_t color) const;
-    bool would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color);
     
     void add_pawn_moves(uint8_t pos, Array &moves) const;
     void add_knight_moves(uint8_t pos, Array &moves) const;
@@ -312,14 +168,7 @@ private:
     void add_castling_moves(uint8_t pos, Array &moves) const;
     
     String move_to_notation(const Move &move) const;
-
-    // ==================== AI INTERNAL HELPERS ====================
-    int16_t score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
-    void score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
-    void sort_moves(MoveList &moves) const;
-    
-    int minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing);
-    bool has_legal_moves() const;
+    bool would_be_in_check_after_move(uint8_t from, uint8_t to, uint8_t color);
 
 protected:
     static void _bind_methods();
@@ -330,67 +179,70 @@ public:
 
     void _ready();
     
-    // Public API
+    // ==================== PUBLIC STATE ACCESS ====================
     uint8_t get_turn() const;
     uint8_t get_piece_on_square(uint8_t pos) const;
     void set_piece_on_square(uint8_t pos, uint8_t piece);
+    uint64_t get_hash() const { return current_hash; }
     
+    // Direct access for NeuralNet (efficient evaluation)
+    const uint8_t* get_squares() const { return squares; }
+    const bool* get_castling_rights() const { return castling_rights; }
+    uint8_t get_en_passant_target() const { return en_passant_target; }
+    uint8_t get_white_king_pos() const { return white_king_pos; }
+    uint8_t get_black_king_pos() const { return black_king_pos; }
+    
+    inline uint8_t get_king_pos(uint8_t color) const {
+        return (color == 0) ? white_king_pos : black_king_pos;
+    }
+    
+    // ==================== BOARD SETUP ====================
     void setup_board(const String &fen_notation);
     String get_fen() const;
     
+    // ==================== MOVE INTERFACE ====================
     uint8_t attempt_move(uint8_t start, uint8_t end);
     void commit_promotion(const String &type_str);
-    
     void revert_move();
     Array get_moves() const;
-    
-    Array get_all_possible_moves(uint8_t color);
-    Array get_legal_moves_for_piece(uint8_t square);
-    uint64_t count_all_moves(uint8_t depth);
-    Dictionary get_perft_analysis(uint8_t depth);
     void make_move(uint8_t start, uint8_t end);
     
-    // AI Functions
-    int evaluate_board() const;
-    Dictionary get_best_move(int depth);
+    // ==================== MOVE GENERATION (Public for NeuralNet) ====================
+    bool is_square_attacked_fast(uint8_t pos, uint8_t attacking_color) const;
+    bool is_king_in_check(uint8_t color) const;
+    bool has_legal_moves() const;
     
-    // Iterative Deepening Search
-    // Searches from depth 1 to max_depth, returning the best move from the deepest completed search
-    // Benefits from TT: each iteration seeds the TT for the next, improving move ordering
-    // Returns Dictionary with keys: "from", "to", "score", "depth" (actual depth completed)
-    Dictionary run_iterative_deepening(int max_depth);
+    void generate_pawn_moves(uint8_t pos, MoveList &moves) const;
+    void generate_knight_moves(uint8_t pos, MoveList &moves) const;
+    void generate_bishop_moves(uint8_t pos, MoveList &moves) const;
+    void generate_rook_moves(uint8_t pos, MoveList &moves) const;
+    void generate_queen_moves(uint8_t pos, MoveList &moves) const;
+    void generate_king_moves(uint8_t pos, MoveList &moves) const;
+    void generate_castling_moves(uint8_t pos, MoveList &moves) const;
+    void generate_all_pseudo_legal(MoveList &moves) const;
     
-    // Game state queries
+    // Fast make/unmake for search (public for NeuralNet)
+    void make_move_fast(const FastMove &m);
+    void unmake_move_fast(const FastMove &m, uint8_t ep_before, bool castling_before[4], uint64_t hash_before);
+    
+    // ==================== GAME STATE QUERIES ====================
+    Array get_all_possible_moves(uint8_t color);
+    Array get_legal_moves_for_piece(uint8_t square);
     bool is_checkmate(uint8_t color);
     bool is_stalemate(uint8_t color);
     bool is_check(uint8_t color) const;
     bool is_game_over();
     int get_game_result();
     
-    // Utility
+    // ==================== PERFT (Logic Verification) ====================
+    uint64_t count_all_moves(uint8_t depth);
+    Dictionary get_perft_analysis(uint8_t depth);
+    
+    // ==================== UTILITY ====================
     Vector2i pos_to_coords(uint8_t pos) const;
     uint8_t coords_to_pos(int rank, int file) const;
     String square_to_algebraic(uint8_t pos) const;
     uint8_t algebraic_to_square(const String &algebraic) const;
-    
-    // Hash accessor (for debugging/testing)
-    uint64_t get_hash() const { return current_hash; }
-    
-    inline uint8_t get_king_pos(uint8_t color) const {
-        return (color == 0) ? white_king_pos : black_king_pos;
-    }
-    
-    static inline int get_piece_value(uint8_t piece_type) {
-        switch (piece_type) {
-            case PIECE_PAWN:   return PAWN_VALUE;
-            case PIECE_KNIGHT: return KNIGHT_VALUE;
-            case PIECE_BISHOP: return BISHOP_VALUE;
-            case PIECE_ROOK:   return ROOK_VALUE;
-            case PIECE_QUEEN:  return QUEEN_VALUE;
-            case PIECE_KING:   return 0;
-            default:          return 0;
-        }
-    }
 };
 
 #endif // BOARD_H
