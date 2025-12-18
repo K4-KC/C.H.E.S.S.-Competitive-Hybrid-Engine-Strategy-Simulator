@@ -6,686 +6,326 @@
 
 using namespace godot;
 
-// ==================== STATIC MEMBER DEFINITIONS ====================
-
-TTEntry* NeuralNet::tt_table = nullptr;
-bool NeuralNet::tt_initialized = false;
-uint8_t NeuralNet::tt_age = 0;
-
-int16_t NeuralNet::mvv_lva_table[7][7];
-bool NeuralNet::mvv_lva_initialized = false;
-
-// Piece values for MVV-LVA scoring
-static const int MVV_LVA_PIECE_VALUES[7] = {0, 100, 300, 300, 500, 900, 10000};
-
-// ==================== STATIC INITIALIZATION ====================
-
-void NeuralNet::init_tt() {
-    if (tt_initialized) return;
-    
-    tt_table = new TTEntry[TT_SIZE];
-    memset(tt_table, 0, sizeof(TTEntry) * TT_SIZE);
-    tt_initialized = true;
-    tt_age = 0;
-}
-
-void NeuralNet::init_mvv_lva_table() {
-    if (mvv_lva_initialized) return;
-    
-    for (int victim = 0; victim < 7; victim++) {
-        for (int attacker = 0; attacker < 7; attacker++) {
-            if (victim == PIECE_NONE || attacker == PIECE_NONE) {
-                mvv_lva_table[victim][attacker] = 0;
-            } else {
-                mvv_lva_table[victim][attacker] = 
-                    MVV_LVA_PIECE_VALUES[victim] * 10 - MVV_LVA_PIECE_VALUES[attacker];
-            }
-        }
-    }
-    mvv_lva_initialized = true;
-}
-
-// ==================== TRANSPOSITION TABLE ====================
-
-void NeuralNet::tt_clear() {
-    if (tt_table) {
-        memset(tt_table, 0, sizeof(TTEntry) * TT_SIZE);
-    }
-    tt_age = 0;
-}
-
-void NeuralNet::tt_new_search() {
-    tt_age++;
-}
-
-void NeuralNet::tt_store(uint64_t key, int score, int depth, int flag, uint8_t best_from, uint8_t best_to) {
-    if (!tt_table) return;
-    
-    size_t index = key % TT_SIZE;
-    TTEntry* entry = &tt_table[index];
-    
-    bool should_replace = 
-        entry->key == 0 ||
-        entry->key == key ||
-        entry->age != tt_age ||
-        entry->depth <= depth;
-    
-    if (should_replace) {
-        entry->key = key;
-        entry->score = static_cast<int16_t>(score);
-        entry->depth = static_cast<int8_t>(depth);
-        entry->flag = static_cast<uint8_t>(flag);
-        entry->best_from = best_from;
-        entry->best_to = best_to;
-        entry->age = tt_age;
-    }
-}
-
-TTEntry* NeuralNet::tt_probe(uint64_t key) const {
-    if (!tt_table) return nullptr;
-    
-    size_t index = key % TT_SIZE;
-    TTEntry* entry = &tt_table[index];
-    
-    if (entry->key == key) {
-        return entry;
-    }
-    
-    return nullptr;
-}
-
-// ==================== KILLER MOVES ====================
-
-void NeuralNet::clear_killers() {
-    for (int ply = 0; ply < MAX_PLY; ply++) {
-        killer_moves[ply][0].clear();
-        killer_moves[ply][1].clear();
-    }
-}
-
-void NeuralNet::store_killer(int ply, uint8_t from, uint8_t to) {
-    if (ply < 0 || ply >= MAX_PLY) return;
-    
-    if (killer_moves[ply][0].matches(from, to)) return;
-    
-    killer_moves[ply][1] = killer_moves[ply][0];
-    killer_moves[ply][0].set(from, to);
-}
-
-int NeuralNet::is_killer(int ply, uint8_t from, uint8_t to) const {
-    if (ply < 0 || ply >= MAX_PLY) return 0;
-    
-    if (killer_moves[ply][0].matches(from, to)) return 1;
-    if (killer_moves[ply][1].matches(from, to)) return 2;
-    return 0;
-}
-
-// ==================== HISTORY HEURISTIC ====================
-
-void NeuralNet::clear_history() {
-    memset(history_table, 0, sizeof(history_table));
-}
-
-void NeuralNet::update_history(uint8_t from, uint8_t to, int depth) {
-    if (from >= 64 || to >= 64) return;
-    
-    int32_t bonus = depth * depth;
-    history_table[from][to] += bonus;
-    
-    if (history_table[from][to] > HISTORY_MAX) {
-        for (int f = 0; f < 64; f++) {
-            for (int t = 0; t < 64; t++) {
-                history_table[f][t] /= 2;
-            }
-        }
-    }
-}
-
-int32_t NeuralNet::get_history(uint8_t from, uint8_t to) const {
-    if (from >= 64 || to >= 64) return 0;
-    return history_table[from][to];
-}
-
-// ==================== MOVE ORDERING ====================
-
-int16_t NeuralNet::score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
-    // TT best move has highest priority
-    if (m.from == tt_best_from && m.to == tt_best_to && tt_best_from != 255) {
-        return SCORE_TT_MOVE;
-    }
-    
-    int16_t score = 0;
-    uint8_t promo_piece = (m.flags >> 3) & 7;
-    bool is_capture = (m.flags & 1) || (m.flags & 2);
-    
-    // Promotions
-    if (promo_piece) {
-        if (promo_piece == PIECE_QUEEN) {
-            score = SCORE_QUEEN_PROMOTION;
-        } else {
-            score = SCORE_OTHER_PROMOTION + promo_piece * 10;
-        }
-        
-        if (is_capture) {
-            uint8_t victim_type = GET_PIECE_TYPE(m.captured);
-            score += mvv_lva_table[victim_type][PIECE_PAWN];
-        }
-    }
-    // Captures - MVV-LVA
-    else if (is_capture) {
-        uint8_t victim_type = GET_PIECE_TYPE(m.captured);
-        uint8_t attacker_type = GET_PIECE_TYPE(board->get_piece_on_square(m.from));
-        score = SCORE_CAPTURE_BASE + mvv_lva_table[victim_type][attacker_type];
-    }
-    // Quiet moves - Killers and History
-    else {
-        int killer_idx = is_killer(ply, m.from, m.to);
-        if (killer_idx == 1) {
-            score = SCORE_KILLER_1;
-        } else if (killer_idx == 2) {
-            score = SCORE_KILLER_2;
-        } else {
-            int32_t hist = get_history(m.from, m.to);
-            if (hist > 0) {
-                score = static_cast<int16_t>(std::min(static_cast<int32_t>(SCORE_HISTORY_MAX), hist / 10));
-            } else {
-                score = SCORE_QUIET_MOVE;
-            }
-            
-            // Small bonus for castling
-            if (m.flags & 4) {
-                score += 50;
-            }
-        }
-    }
-    
-    return score;
-}
-
-void NeuralNet::score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const {
-    for (int i = 0; i < moves.count; i++) {
-        moves.moves[i].score = score_move(moves.moves[i], tt_best_from, tt_best_to, ply);
-    }
-}
-
-void NeuralNet::sort_moves(MoveList &moves) const {
-    std::sort(moves.moves, moves.moves + moves.count,
-        [](const FastMove &a, const FastMove &b) {
-            return a.score > b.score;
-        }
-    );
-}
-
 // ==================== NEURAL NETWORK FEATURE EXTRACTION ====================
 
-void NeuralNet::extract_features() {
-    if (!board) return;
-    
-    // Resize and clear feature vector
-    input_features.resize(NN_TOTAL_INPUTS);
-    std::fill(input_features.begin(), input_features.end(), 0.0f);
-    
-    const uint8_t* squares = board->get_squares();
-    
-    // ==================== PIECE-SQUARE FEATURES (768 inputs) ====================
-    // 12 planes: P, N, B, R, Q, K (white), p, n, b, r, q, k (black)
-    // Each plane has 64 squares
-    
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece)) continue;
-        
-        uint8_t piece_type = GET_PIECE_TYPE(piece);
-        bool is_white = IS_WHITE(piece);
-        
-        // Calculate plane index (0-11)
-        // White pieces: P=0, N=1, B=2, R=3, Q=4, K=5
-        // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
-        int plane = (piece_type - 1) + (is_white ? 0 : 6);
-        
-        // Feature index = plane * 64 + square
-        int feature_idx = plane * 64 + sq;
-        input_features[feature_idx] = 1.0f;
+float NeuralNet::forward_pass(const std::vector<float> &input_features) {
+    // If network is not initialized, return 0
+    if (!network_initialized || layer_sizes.empty()) {
+        return 0.0f;
     }
-    
-    // ==================== CASTLING RIGHTS (4 inputs) ====================
-    const bool* castling = board->get_castling_rights();
-    int castling_offset = NN_PIECE_INPUTS;  // 768
-    
-    input_features[castling_offset + 0] = castling[0] ? 1.0f : 0.0f;  // White Kingside
-    input_features[castling_offset + 1] = castling[1] ? 1.0f : 0.0f;  // White Queenside
-    input_features[castling_offset + 2] = castling[2] ? 1.0f : 0.0f;  // Black Kingside
-    input_features[castling_offset + 3] = castling[3] ? 1.0f : 0.0f;  // Black Queenside
-    
-    // ==================== SIDE TO MOVE (1 input) ====================
-    int turn_offset = castling_offset + NN_CASTLING_INPUTS;  // 772
-    input_features[turn_offset] = (board->get_turn() == 0) ? 1.0f : 0.0f;  // 1.0 = white to move
-    
-    // ==================== EN PASSANT (8 inputs, one-hot by file) ====================
-    int ep_offset = turn_offset + NN_TURN_INPUT;  // 773
-    uint8_t ep_target = board->get_en_passant_target();
-    if (ep_target < 64) {
-        int ep_file = ep_target % 8;
-        input_features[ep_offset + ep_file] = 1.0f;
+
+    // Validate input size
+    if (input_features.size() != static_cast<size_t>(layer_sizes[0])) {
+        UtilityFunctions::print("Error: Input size mismatch. Expected ", layer_sizes[0],
+                                ", got ", input_features.size());
+        return 0.0f;
     }
-    // If no en passant, all 8 inputs remain 0.0
-}
 
-float NeuralNet::forward_pass() {
-    // ==================== PLACEHOLDER FOR NEURAL NETWORK INFERENCE ====================
-    // 
-    // TODO: Replace this with actual ONNX Runtime inference:
-    //
-    // 1. Load model once in constructor or load_network():
-    //    Ort::Session session(env, "model.onnx", session_options);
-    //
-    // 2. Create input tensor from input_features:
-    //    std::vector<int64_t> input_shape = {1, NN_TOTAL_INPUTS};
-    //    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-    //        memory_info, input_features.data(), input_features.size(),
-    //        input_shape.data(), input_shape.size());
-    //
-    // 3. Run inference:
-    //    auto output_tensors = session.Run(
-    //        Ort::RunOptions{nullptr},
-    //        input_names.data(), &input_tensor, 1,
-    //        output_names.data(), 1);
-    //
-    // 4. Extract output value:
-    //    float* output_data = output_tensors[0].GetTensorMutableData<float>();
-    //    return output_data[0];  // Assuming single output neuron
-    //
-    // ==================== END PLACEHOLDER ====================
-    
-    // For now, return the material evaluation as a fallback
-    return static_cast<float>(evaluate_material());
-}
-
-// ==================== EVALUATION ====================
-
-int NeuralNet::evaluate() {
-    if (!board) return 0;
-    
-    if (use_neural_network) {
-        // Extract features and run neural network
-        extract_features();
-        float nn_score = forward_pass();
-        
-        // Convert float score to centipawns (assuming NN outputs in roughly -1 to +1 range)
-        // Scale factor can be tuned based on training
-        return static_cast<int>(nn_score);
-    } else {
-        // Use simple material evaluation
-        return evaluate_material();
-    }
-}
-
-int NeuralNet::evaluate_material() const {
-    if (!board) return 0;
-    
-    int score = 0;
-    const uint8_t* squares = board->get_squares();
-    
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece)) continue;
-        
-        int piece_value = 0;
-        switch (GET_PIECE_TYPE(piece)) {
-            case PIECE_PAWN:   piece_value = PAWN_VALUE;   break;
-            case PIECE_KNIGHT: piece_value = KNIGHT_VALUE; break;
-            case PIECE_BISHOP: piece_value = BISHOP_VALUE; break;
-            case PIECE_ROOK:   piece_value = ROOK_VALUE;   break;
-            case PIECE_QUEEN:  piece_value = QUEEN_VALUE;  break;
-            case PIECE_KING:   piece_value = 0;            break;
+    // Ensure activations storage is properly sized
+    if (activations.size() != layer_sizes.size()) {
+        activations.resize(layer_sizes.size());
+        for (size_t i = 0; i < layer_sizes.size(); i++) {
+            activations[i].resize(layer_sizes[i]);
         }
-        
-        if (IS_WHITE(piece)) {
-            score += piece_value;
+    }
+
+    // Set input layer activations
+    for (size_t i = 0; i < input_features.size(); i++) {
+        activations[0][i] = input_features[i];
+    }
+
+    // Forward pass through each layer
+    for (size_t layer = 1; layer < layer_sizes.size(); layer++) {
+        int prev_layer_size = layer_sizes[layer - 1];
+        int current_layer_size = layer_sizes[layer];
+
+        // Check if weights and biases exist for this layer
+        if (layer - 1 >= weights.size() || layer - 1 >= biases.size()) {
+            UtilityFunctions::print("Error: Weights not set for layer ", layer - 1);
+            return 0.0f;
+        }
+
+        // Compute activations for each neuron in current layer
+        for (int neuron = 0; neuron < current_layer_size; neuron++) {
+            float sum = biases[layer - 1][neuron];
+
+            // Sum weighted inputs
+            for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
+                sum += activations[layer - 1][prev_neuron] * weights[layer - 1][neuron][prev_neuron];
+            }
+
+            // Apply activation function based on layer configuration
+            int activation_type = (layer - 1 < activation_functions.size()) ?
+                                  activation_functions[layer - 1] : 2; // Default to sigmoid
+            activations[layer][neuron] = apply_activation(sum, activation_type);
+        }
+    }
+
+    // Return the output (last layer, first neuron)
+    return activations.back()[0];
+}
+
+// ==================== ACTIVATION FUNCTIONS ====================
+
+float NeuralNet::linear(float x) const {
+    return x;
+}
+
+float NeuralNet::relu(float x) const {
+    return (x > 0.0f) ? x : 0.0f;
+}
+
+float NeuralNet::sigmoid(float x) const {
+    return 1.0f / (1.0f + std::exp(-x));
+}
+
+float NeuralNet::tanh_activation(float x) const {
+    return std::tanh(x);
+}
+
+float NeuralNet::apply_activation(float x, int activation_type) const {
+    switch (activation_type) {
+        case 0: return linear(x);
+        case 1: return relu(x);
+        case 2: return sigmoid(x);
+        case 3: return tanh_activation(x);
+        default: return sigmoid(x); // Default to sigmoid
+    }
+}
+
+// ==================== NEURAL NETWORK INFERENCE ====================
+
+float NeuralNet::predict(const Array &input_array) {
+    // Convert Array to std::vector<float>
+    std::vector<float> input_vec;
+    input_vec.reserve(input_array.size());
+
+    for (int i = 0; i < input_array.size(); i++) {
+        input_vec.push_back(input_array[i]);
+    }
+
+    return forward_pass(input_vec);
+}
+
+// ==================== NEURAL NETWORK UTILITIES ====================
+
+void NeuralNet::initialize_neural_network(const Array &layer_sizes_array, int activation /* = 2 */) {
+    // Clear existing network
+    layer_sizes.clear();
+    weights.clear();
+    biases.clear();
+    activations.clear();
+    activation_functions.clear();
+    network_initialized = false;
+
+    // Validate input
+    if (layer_sizes_array.size() < 2) {
+        UtilityFunctions::print("Error: Neural network must have at least 2 layers (input and output)");
+        return;
+    }
+
+    // Validate activation type
+    if (activation < 0 || activation > 3) {
+        UtilityFunctions::print("Warning: Invalid activation type ", activation,
+                                ". Using sigmoid (2) as default.");
+        activation = 2;
+    }
+
+    // Parse layer sizes
+    for (int i = 0; i < layer_sizes_array.size(); i++) {
+        int size = layer_sizes_array[i];
+        if (size <= 0) {
+            UtilityFunctions::print("Error: Layer size must be positive, got ", size, " at index ", i);
+            return;
+        }
+        layer_sizes.push_back(size);
+    }
+
+    // Validate input layer size matches expected feature size
+    if (layer_sizes[0] != NN_TOTAL_INPUTS) {
+        UtilityFunctions::print("Warning: Input layer size ", layer_sizes[0],
+                                " does not match expected feature size ", NN_TOTAL_INPUTS);
+        UtilityFunctions::print("Adjusting input layer size to ", NN_TOTAL_INPUTS);
+        layer_sizes[0] = NN_TOTAL_INPUTS;
+    }
+
+    // Initialize weights and biases with random values (Xavier initialization)
+    int num_weight_layers = layer_sizes.size() - 1;
+    weights.resize(num_weight_layers);
+    biases.resize(num_weight_layers);
+
+    // Initialize activation functions for each layer
+    // By default, use specified activation for hidden layers, linear for output
+    activation_functions.resize(num_weight_layers);
+    for (int i = 0; i < num_weight_layers; i++) {
+        if (i == num_weight_layers - 1) {
+            // Output layer uses linear activation by default
+            activation_functions[i] = 0;
         } else {
-            score -= piece_value;
+            // Hidden layers use specified default activation
+            activation_functions[i] = activation;
         }
     }
-    
-    return score;
+
+    for (int layer = 0; layer < num_weight_layers; layer++) {
+        int input_size = layer_sizes[layer];
+        int output_size = layer_sizes[layer + 1];
+
+        // Initialize weights for this layer
+        weights[layer].resize(output_size);
+        biases[layer].resize(output_size);
+
+        // Xavier initialization factor
+        float xavier_factor = std::sqrt(2.0f / (input_size + output_size));
+
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            weights[layer][neuron].resize(input_size);
+
+            // Initialize weights with small random values
+            for (int input = 0; input < input_size; input++) {
+                // Simple random initialization (in practice, you'd load these from a file)
+                weights[layer][neuron][input] = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * xavier_factor;
+            }
+
+            // Initialize bias to zero
+            biases[layer][neuron] = 0.0f;
+        }
+    }
+
+    // Initialize activation storage
+    activations.resize(layer_sizes.size());
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        activations[i].resize(layer_sizes[i]);
+    }
+
+    network_initialized = true;
+
+    // Print network architecture with activation functions
+    UtilityFunctions::print("Neural network initialized with architecture:");
+    String arch = "  [";
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        arch += String::num_int64(layer_sizes[i]);
+        if (i < layer_sizes.size() - 1) arch += ", ";
+    }
+    arch += "]";
+    UtilityFunctions::print(arch);
+
+    // Print activation functions
+    String activation_names[] = {"linear", "relu", "sigmoid", "tanh"};
+    String activations_str = "  Activations: [";
+    for (size_t i = 0; i < activation_functions.size(); i++) {
+        int act_type = activation_functions[i];
+        activations_str += (act_type >= 0 && act_type <= 3) ? activation_names[act_type] : "unknown";
+        if (i < activation_functions.size() - 1) activations_str += ", ";
+    }
+    activations_str += "]";
+    UtilityFunctions::print(activations_str);
 }
 
-// ==================== ALPHA-BETA SEARCH ====================
+void NeuralNet::set_layer_weights(int layer_index, const Array &weights_array, const Array &biases_array) {
+    if (!network_initialized) {
+        UtilityFunctions::print("Error: Network not initialized. Call initialize_neural_network first.");
+        return;
+    }
 
-int NeuralNet::minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing) {
-    int original_alpha = alpha;
-    
-    // TT Probe
-    uint64_t hash = board->get_hash();
-    TTEntry* tt_entry = tt_probe(hash);
-    uint8_t tt_best_from = 255;
-    uint8_t tt_best_to = 255;
-    
-    if (tt_entry) {
-        tt_best_from = tt_entry->best_from;
-        tt_best_to = tt_entry->best_to;
-        
-        if (tt_entry->depth >= depth) {
-            int tt_score = tt_entry->score;
-            
-            switch (tt_entry->flag) {
-                case TT_FLAG_EXACT:
-                    return tt_score;
-                case TT_FLAG_ALPHA:
-                    if (tt_score <= alpha) return tt_score;
-                    if (tt_score < beta) beta = tt_score;
-                    break;
-                case TT_FLAG_BETA:
-                    if (tt_score >= beta) return tt_score;
-                    if (tt_score > alpha) alpha = tt_score;
-                    break;
-            }
-        }
+    if (layer_index < 0 || layer_index >= static_cast<int>(weights.size())) {
+        UtilityFunctions::print("Error: Invalid layer index ", layer_index,
+                                ". Valid range: 0 to ", weights.size() - 1);
+        return;
     }
-    
-    // Terminal node check
-    uint8_t current_turn = board->get_turn();
-    bool in_check = board->is_king_in_check(current_turn);
-    bool has_moves = board->has_legal_moves();
-    
-    if (!has_moves) {
-        if (in_check) {
-            return is_maximizing ? (-CHECKMATE_SCORE + ply) : (CHECKMATE_SCORE - ply);
-        } else {
-            return STALEMATE_SCORE;
-        }
+
+    int output_size = layer_sizes[layer_index + 1];
+    int input_size = layer_sizes[layer_index];
+
+    // Validate weights array dimensions
+    if (weights_array.size() != output_size) {
+        UtilityFunctions::print("Error: Expected ", output_size, " neurons, got ", weights_array.size());
+        return;
     }
-    
-    // Leaf node - evaluate
-    if (depth == 0) {
-        int score = evaluate();
-        tt_store(hash, score, 0, TT_FLAG_EXACT, 255, 255);
-        return score;
+
+    // Validate biases array
+    if (biases_array.size() != output_size) {
+        UtilityFunctions::print("Error: Expected ", output_size, " biases, got ", biases_array.size());
+        return;
     }
-    
-    // Generate and sort moves
-    MoveList moves;
-    board->generate_all_pseudo_legal(moves);
-    score_moves(moves, tt_best_from, tt_best_to, ply);
-    sort_moves(moves);
-    
-    uint8_t current_color = current_turn;
-    
-    uint8_t ep_before = board->get_en_passant_target();
-    bool castling_before[4];
-    const bool* cr = board->get_castling_rights();
-    for (int i = 0; i < 4; i++) castling_before[i] = cr[i];
-    uint64_t hash_before = hash;
-    
-    uint8_t best_move_from = 255;
-    uint8_t best_move_to = 255;
-    
-    if (is_maximizing) {
-        int best_score = INT_MIN;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            board->make_move_fast(m);
-            
-            uint8_t our_king = board->get_king_pos(current_color);
-            if (!board->is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, false);
-                
-                if (score > best_score) {
-                    best_score = score;
-                    best_move_from = m.from;
-                    best_move_to = m.to;
-                }
-                
-                if (score > alpha) {
-                    alpha = score;
-                }
-                
-                if (score >= beta) {
-                    board->unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    
-                    // Update killers and history for quiet moves
-                    bool is_capture = (m.flags & 1) || (m.flags & 2);
-                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
-                    if (!is_capture && !is_promotion) {
-                        store_killer(ply, m.from, m.to);
-                        update_history(m.from, m.to, depth);
-                    }
-                    
-                    tt_store(hash_before, best_score, depth, TT_FLAG_BETA, best_move_from, best_move_to);
-                    return best_score;
-                }
-            }
-            
-            board->unmake_move_fast(m, ep_before, castling_before, hash_before);
+
+    // Set weights
+    for (int neuron = 0; neuron < output_size; neuron++) {
+        Array neuron_weights = weights_array[neuron];
+
+        if (neuron_weights.size() != input_size) {
+            UtilityFunctions::print("Error: Neuron ", neuron, " expected ", input_size,
+                                    " weights, got ", neuron_weights.size());
+            return;
         }
-        
-        int tt_flag = (best_score <= original_alpha) ? TT_FLAG_ALPHA : TT_FLAG_EXACT;
-        tt_store(hash_before, best_score, depth, tt_flag, best_move_from, best_move_to);
-        
-        return best_score;
-    } else {
-        int best_score = INT_MAX;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            board->make_move_fast(m);
-            
-            uint8_t our_king = board->get_king_pos(current_color);
-            if (!board->is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(depth - 1, ply + 1, alpha, beta, true);
-                
-                if (score < best_score) {
-                    best_score = score;
-                    best_move_from = m.from;
-                    best_move_to = m.to;
-                }
-                
-                if (score < beta) {
-                    beta = score;
-                }
-                
-                if (score <= alpha) {
-                    board->unmake_move_fast(m, ep_before, castling_before, hash_before);
-                    
-                    // Update killers and history for quiet moves
-                    bool is_capture = (m.flags & 1) || (m.flags & 2);
-                    bool is_promotion = ((m.flags >> 3) & 7) != 0;
-                    if (!is_capture && !is_promotion) {
-                        store_killer(ply, m.from, m.to);
-                        update_history(m.from, m.to, depth);
-                    }
-                    
-                    tt_store(hash_before, best_score, depth, TT_FLAG_ALPHA, best_move_from, best_move_to);
-                    return best_score;
-                }
-            }
-            
-            board->unmake_move_fast(m, ep_before, castling_before, hash_before);
+
+        for (int input = 0; input < input_size; input++) {
+            weights[layer_index][neuron][input] = neuron_weights[input];
         }
-        
-        tt_store(hash_before, best_score, depth, TT_FLAG_EXACT, best_move_from, best_move_to);
-        
-        return best_score;
+
+        biases[layer_index][neuron] = biases_array[neuron];
     }
+
+    UtilityFunctions::print("Layer ", layer_index, " weights and biases set successfully");
 }
 
-// ==================== SEARCH INTERFACE ====================
-
-Dictionary NeuralNet::get_best_move(int depth) {
-    Dictionary result;
-    if (!board) return result;
-    
-    clear_killers();
-    clear_history();
-    tt_new_search();
-    
-    MoveList moves;
-    board->generate_all_pseudo_legal(moves);
-    
-    TTEntry* tt_entry = tt_probe(board->get_hash());
-    uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
-    uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
-    
-    score_moves(moves, tt_best_from, tt_best_to, 0);
-    sort_moves(moves);
-    
-    uint8_t current_color = board->get_turn();
-    bool is_maximizing = (current_color == 0);
-    
-    uint8_t ep_before = board->get_en_passant_target();
-    bool castling_before[4];
-    const bool* cr = board->get_castling_rights();
-    for (int i = 0; i < 4; i++) castling_before[i] = cr[i];
-    uint64_t hash_before = board->get_hash();
-    
-    int alpha = INT_MIN;
-    int beta = INT_MAX;
-    
-    int best_score = is_maximizing ? INT_MIN : INT_MAX;
-    int best_from = -1;
-    int best_to = -1;
-    
-    for (int i = 0; i < moves.count; i++) {
-        FastMove &m = moves.moves[i];
-        
-        board->make_move_fast(m);
-        
-        uint8_t our_king = board->get_king_pos(current_color);
-        if (!board->is_square_attacked_fast(our_king, 1 - current_color)) {
-            int score = minimax_internal(depth - 1, 1, alpha, beta, !is_maximizing);
-            
-            if (is_maximizing) {
-                if (score > best_score) {
-                    best_score = score;
-                    best_from = m.from;
-                    best_to = m.to;
-                }
-                if (score > alpha) {
-                    alpha = score;
-                }
-            } else {
-                if (score < best_score) {
-                    best_score = score;
-                    best_from = m.from;
-                    best_to = m.to;
-                }
-                if (score < beta) {
-                    beta = score;
-                }
-            }
-        }
-        
-        board->unmake_move_fast(m, ep_before, castling_before, hash_before);
+Array NeuralNet::get_layer_sizes() const {
+    Array result;
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        result.append(layer_sizes[i]);
     }
-    
-    if (best_from >= 0) {
-        tt_store(hash_before, best_score, depth, TT_FLAG_EXACT, best_from, best_to);
-        
-        result["from"] = best_from;
-        result["to"] = best_to;
-        result["score"] = best_score;
-    }
-    
     return result;
 }
 
-Dictionary NeuralNet::run_iterative_deepening(int max_depth) {
-    Dictionary best_result;
-    if (!board) return best_result;
-    
-    clear_killers();
-    clear_history();
-    tt_new_search();
-    
-    for (int current_depth = 1; current_depth <= max_depth; current_depth++) {
-        Dictionary result;
-        
-        MoveList moves;
-        board->generate_all_pseudo_legal(moves);
-        
-        TTEntry* tt_entry = tt_probe(board->get_hash());
-        uint8_t tt_best_from = (tt_entry) ? tt_entry->best_from : 255;
-        uint8_t tt_best_to = (tt_entry) ? tt_entry->best_to : 255;
-        
-        score_moves(moves, tt_best_from, tt_best_to, 0);
-        sort_moves(moves);
-        
-        uint8_t current_color = board->get_turn();
-        bool is_maximizing = (current_color == 0);
-        
-        uint8_t ep_before = board->get_en_passant_target();
-        bool castling_before[4];
-        const bool* cr = board->get_castling_rights();
-        for (int i = 0; i < 4; i++) castling_before[i] = cr[i];
-        uint64_t hash_before = board->get_hash();
-        
-        int alpha = INT_MIN;
-        int beta = INT_MAX;
-        
-        int best_score = is_maximizing ? INT_MIN : INT_MAX;
-        int best_from = -1;
-        int best_to = -1;
-        
-        for (int i = 0; i < moves.count; i++) {
-            FastMove &m = moves.moves[i];
-            
-            board->make_move_fast(m);
-            
-            uint8_t our_king = board->get_king_pos(current_color);
-            if (!board->is_square_attacked_fast(our_king, 1 - current_color)) {
-                int score = minimax_internal(current_depth - 1, 1, alpha, beta, !is_maximizing);
-                
-                if (is_maximizing) {
-                    if (score > best_score) {
-                        best_score = score;
-                        best_from = m.from;
-                        best_to = m.to;
-                    }
-                    if (score > alpha) {
-                        alpha = score;
-                    }
-                } else {
-                    if (score < best_score) {
-                        best_score = score;
-                        best_from = m.from;
-                        best_to = m.to;
-                    }
-                    if (score < beta) {
-                        beta = score;
-                    }
-                }
-            }
-            
-            board->unmake_move_fast(m, ep_before, castling_before, hash_before);
-        }
-        
-        if (best_from >= 0) {
-            tt_store(hash_before, best_score, current_depth, TT_FLAG_EXACT, best_from, best_to);
-            
-            result["from"] = best_from;
-            result["to"] = best_to;
-            result["score"] = best_score;
-            result["depth"] = current_depth;
-            
-            best_result = result;
-            
-            // Early termination on checkmate
-            if (best_score >= CHECKMATE_SCORE - 100 || best_score <= -CHECKMATE_SCORE + 100) {
-                break;
-            }
-        }
+void NeuralNet::set_activation_function(int layer_index, int activation_type) {
+    if (!network_initialized) {
+        UtilityFunctions::print("Error: Network not initialized. Call initialize_neural_network first.");
+        return;
     }
-    
-    return best_result;
+
+    // Validate activation type
+    if (activation_type < 0 || activation_type > 3) {
+        UtilityFunctions::print("Error: Invalid activation type ", activation_type,
+                                ". Valid range: 0 (linear), 1 (relu), 2 (sigmoid), 3 (tanh)");
+        return;
+    }
+
+    // Set for all layers if layer_index is -1
+    if (layer_index == -1) {
+        for (size_t i = 0; i < activation_functions.size(); i++) {
+            activation_functions[i] = activation_type;
+        }
+        UtilityFunctions::print("All layers set to activation type ", activation_type);
+        return;
+    }
+
+    // Validate layer index
+    if (layer_index < 0 || layer_index >= static_cast<int>(activation_functions.size())) {
+        UtilityFunctions::print("Error: Invalid layer index ", layer_index,
+                                ". Valid range: 0 to ", activation_functions.size() - 1,
+                                " (or -1 for all layers)");
+        return;
+    }
+
+    activation_functions[layer_index] = activation_type;
+
+    String activation_names[] = {"linear", "relu", "sigmoid", "tanh"};
+    UtilityFunctions::print("Layer ", layer_index, " activation set to ",
+                            activation_names[activation_type]);
 }
 
-// ==================== NEURAL NETWORK CONTROL ====================
+int NeuralNet::get_activation_function(int layer_index) const {
+    if (!network_initialized) {
+        UtilityFunctions::print("Error: Network not initialized.");
+        return -1;
+    }
 
-void NeuralNet::set_use_neural_network(bool use_nn) {
-    use_neural_network = use_nn;
+    if (layer_index < 0 || layer_index >= static_cast<int>(activation_functions.size())) {
+        UtilityFunctions::print("Error: Invalid layer index ", layer_index);
+        return -1;
+    }
+
+    return activation_functions[layer_index];
 }
 
 bool NeuralNet::load_network(const String &path) {
@@ -720,64 +360,33 @@ bool NeuralNet::load_network(const String &path) {
     return false;
 }
 
-Array NeuralNet::get_features() {
-    Array result;
-    
-    if (!board) return result;
-    
-    extract_features();
-    
-    for (size_t i = 0; i < input_features.size(); i++) {
-        result.append(input_features[i]);
-    }
-    
-    return result;
-}
-
 // ==================== CONSTRUCTOR/DESTRUCTOR ====================
 
 NeuralNet::NeuralNet() {
-    board = nullptr;
-    use_neural_network = false;
-    
-    init_tt();
-    init_mvv_lva_table();
-    
-    clear_killers();
-    clear_history();
-    
-    input_features.reserve(NN_TOTAL_INPUTS);
+    network_initialized = false;
 }
 
 NeuralNet::~NeuralNet() {
-    // TT is static and shared, don't delete here
 }
 
 void NeuralNet::_ready() {
 }
 
-void NeuralNet::set_board(Board* b) {
-    board = b;
-}
-
 // ==================== GODOT BINDINGS ====================
 
 void NeuralNet::_bind_methods() {
-    // Board binding
-    ClassDB::bind_method(D_METHOD("set_board", "board"), &NeuralNet::set_board);
-    
-    // Search methods
-    ClassDB::bind_method(D_METHOD("run_iterative_deepening", "max_depth"), &NeuralNet::run_iterative_deepening);
-    ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &NeuralNet::get_best_move);
-    
-    // Evaluation
-    ClassDB::bind_method(D_METHOD("evaluate"), &NeuralNet::evaluate);
-    ClassDB::bind_method(D_METHOD("evaluate_material"), &NeuralNet::evaluate_material);
-    
-    // Neural network control
-    ClassDB::bind_method(D_METHOD("set_use_neural_network", "use_nn"), &NeuralNet::set_use_neural_network);
-    ClassDB::bind_method(D_METHOD("get_use_neural_network"), &NeuralNet::get_use_neural_network);
+    // Neural network inference
+    ClassDB::bind_method(D_METHOD("predict", "input_array"), &NeuralNet::predict);
+
+    // Neural network utilities
+    ClassDB::bind_method(D_METHOD("initialize_neural_network", "layer_sizes", "activation"), &NeuralNet::initialize_neural_network, DEFVAL(2));
     ClassDB::bind_method(D_METHOD("load_network", "path"), &NeuralNet::load_network);
+    ClassDB::bind_method(D_METHOD("set_layer_weights", "layer_index", "weights", "biases"), &NeuralNet::set_layer_weights);
+    ClassDB::bind_method(D_METHOD("set_activation_function", "layer_index", "activation_type"), &NeuralNet::set_activation_function);
+    ClassDB::bind_method(D_METHOD("get_activation_function", "layer_index"), &NeuralNet::get_activation_function);
+    ClassDB::bind_method(D_METHOD("is_network_initialized"), &NeuralNet::is_network_initialized);
+    ClassDB::bind_method(D_METHOD("get_layer_sizes"), &NeuralNet::get_layer_sizes);
+    ClassDB::bind_method(D_METHOD("get_num_layers"), &NeuralNet::get_num_layers);
     ClassDB::bind_method(D_METHOD("get_input_size"), &NeuralNet::get_input_size);
-    ClassDB::bind_method(D_METHOD("get_features"), &NeuralNet::get_features);
 }
+

@@ -3,6 +3,7 @@
 // Custom Classes
 #include "board.h"
 #include "neural_network.h"
+#include "agent.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -18,6 +19,7 @@ void initialize_chess_ai_module(ModuleInitializationLevel p_level) {
     // Register both the Board (State) and NeuralNet (Agent) classes
     ClassDB::register_class<Board>();
     ClassDB::register_class<NeuralNet>();
+    ClassDB::register_class<Agent>();
 }
 
 void uninitialize_chess_ai_module(ModuleInitializationLevel p_level) {

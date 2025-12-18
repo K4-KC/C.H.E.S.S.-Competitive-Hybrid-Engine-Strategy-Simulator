@@ -40,113 +40,39 @@ using namespace godot;
 #define ROOK_VALUE   500
 #define QUEEN_VALUE  900
 
-// ==================== MOVE ORDERING CONSTANTS ====================
-
-#define SCORE_TT_MOVE           30000
-#define SCORE_QUEEN_PROMOTION   20000
-#define SCORE_CAPTURE_BASE      10000
-#define SCORE_OTHER_PROMOTION   9000
-#define SCORE_KILLER_1          8000
-#define SCORE_KILLER_2          7500
-#define SCORE_HISTORY_MAX       7000
-#define SCORE_QUIET_MOVE        0
-
-// ==================== TRANSPOSITION TABLE ====================
-
-#define TT_FLAG_EXACT  0
-#define TT_FLAG_ALPHA  1
-#define TT_FLAG_BETA   2
-
-#define TT_SIZE 1048576  // 2^20 entries (~24MB)
-
-struct TTEntry {
-    uint64_t key;
-    int16_t score;
-    int8_t depth;
-    uint8_t flag;
-    uint8_t best_from;
-    uint8_t best_to;
-    uint8_t age;
-    uint8_t padding;
-};
-
-// ==================== KILLER MOVES ====================
-
-#define MAX_PLY 64
-
-struct KillerMove {
-    uint8_t from;
-    uint8_t to;
-    
-    inline bool matches(uint8_t f, uint8_t t) const { return from == f && to == t; }
-    inline void set(uint8_t f, uint8_t t) { from = f; to = t; }
-    inline void clear() { from = 255; to = 255; }
-    inline bool is_valid() const { return from != 255; }
-};
-
 // ==================== NEURAL NETWORK CLASS (AI AGENT) ====================
 
 class NeuralNet : public Node2D {
     GDCLASS(NeuralNet, Node2D)
 
-private:
-    // ==================== BOARD REFERENCE ====================
-    Board* board;  // Pointer to the board being analyzed
-    
-    // ==================== TRANSPOSITION TABLE ====================
-    static TTEntry* tt_table;
-    static bool tt_initialized;
-    static uint8_t tt_age;
-    
-    static void init_tt();
-    void tt_store(uint64_t key, int score, int depth, int flag, uint8_t best_from, uint8_t best_to);
-    TTEntry* tt_probe(uint64_t key) const;
-    void tt_clear();
-    void tt_new_search();
-    
-    // ==================== KILLER MOVES ====================
-    KillerMove killer_moves[MAX_PLY][2];
-    
-    void clear_killers();
-    void store_killer(int ply, uint8_t from, uint8_t to);
-    int is_killer(int ply, uint8_t from, uint8_t to) const;
-    
-    // ==================== HISTORY HEURISTIC ====================
-    int32_t history_table[64][64];
-    static const int32_t HISTORY_MAX = 400000;
-    
-    void clear_history();
-    void update_history(uint8_t from, uint8_t to, int depth);
-    int32_t get_history(uint8_t from, uint8_t to) const;
-    
-    // ==================== MVV-LVA TABLE ====================
-    static int16_t mvv_lva_table[7][7];
-    static bool mvv_lva_initialized;
-    static void init_mvv_lva_table();
-    
-    // ==================== MOVE ORDERING ====================
-    int16_t score_move(const FastMove &m, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
-    void score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_to, int ply) const;
-    void sort_moves(MoveList &moves) const;
-    
-    // ==================== SEARCH ALGORITHMS ====================
-    int minimax_internal(int depth, int ply, int alpha, int beta, bool is_maximizing);
-    
+protected:
     // ==================== NEURAL NETWORK FRAMEWORK ====================
-    
-    // Input feature vector (populated by extract_features)
-    std::vector<float> input_features;
-    
-    // Extract board state into neural network input format
-    void extract_features();
-    
-    // Forward pass through neural network
-    // PLACEHOLDER: Currently returns material evaluation
-    // TODO: Replace with ONNX Runtime inference call
-    float forward_pass();
-    
-    // Flag to use neural network vs material evaluation
-    bool use_neural_network;
+
+    // Network architecture
+    std::vector<int> layer_sizes;  // Size of each layer (input, hidden layers, output)
+    std::vector<std::vector<std::vector<float>>> weights;  // weights[layer][neuron][input]
+    std::vector<std::vector<float>> biases;  // biases[layer][neuron]
+    std::vector<std::vector<float>> activations;  // activations[layer][neuron] (for forward pass)
+
+    // Activation function per layer (for layers 1 to n, layer 0 is input)
+    // 0=linear, 1=relu, 2=sigmoid, 3=tanh
+    std::vector<int> activation_functions;
+
+    // Network initialized flag
+    bool network_initialized;
+
+    // Forward pass through neural network with provided input features
+    // Returns the network output value
+    float forward_pass(const std::vector<float> &input_features);
+
+    // Activation functions
+    float relu(float x) const;
+    float sigmoid(float x) const;
+    float tanh_activation(float x) const;
+    float linear(float x) const;
+
+    // Apply activation function by type
+    float apply_activation(float x, int activation_type) const;
 
 protected:
     static void _bind_methods();
@@ -154,46 +80,48 @@ protected:
 public:
     NeuralNet();
     ~NeuralNet();
-    
+
     void _ready();
-    
-    // ==================== BOARD BINDING ====================
-    void set_board(Board* b);
-    Board* get_board() const { return board; }
-    
-    // ==================== EVALUATION ====================
-    
-    // Main evaluation function - returns score from white's perspective
-    // Uses neural network if available, falls back to material count
-    int evaluate();
-    
-    // Simple material evaluation (fallback/baseline)
-    int evaluate_material() const;
-    
-    // ==================== SEARCH INTERFACE ====================
-    
-    // Run iterative deepening search up to max_depth
-    // Returns Dictionary with "from", "to", "score", "depth"
-    Dictionary run_iterative_deepening(int max_depth);
-    
-    // Single-depth search (legacy compatibility)
-    Dictionary get_best_move(int depth);
-    
-    // ==================== NEURAL NETWORK CONTROL ====================
-    
-    // Enable/disable neural network evaluation
-    void set_use_neural_network(bool use_nn);
-    bool get_use_neural_network() const { return use_neural_network; }
-    
+
+    // ==================== NEURAL NETWORK INFERENCE ====================
+
+    // Run inference on provided input features
+    // Returns the network output (centipawns for chess evaluation)
+    float predict(const Array &input_array);
+
+    // ==================== NEURAL NETWORK UTILITIES ====================
+
+    // Initialize neural network with custom architecture
+    // layer_sizes: Array of layer sizes [input_size, hidden1_size, hidden2_size, ..., output_size]
+    // default_activation: Default activation function (0=linear, 1=relu, 2=sigmoid, 3=tanh). Default is sigmoid (2)
+    // Example: [781, 256, 128, 64, 1] creates a network with 781 inputs, 3 hidden layers, and 1 output
+    void initialize_neural_network(const Array &layer_sizes_array, int default_activation = 2);
+
     // Load neural network weights from file
     // PLACEHOLDER: Will load ONNX model
     bool load_network(const String &path);
-    
-    // Get the size of the input feature vector
-    int get_input_size() const { return NN_TOTAL_INPUTS; }
-    
-    // Debug: Get raw feature vector as Array
-    Array get_features();
+
+    // Set weights and biases for a specific layer
+    // layer_index: Which layer to set (0 = first hidden layer, etc.)
+    // weights_array: 2D array of weights [neuron_index][input_index]
+    // biases_array: 1D array of biases [neuron_index]
+    void set_layer_weights(int layer_index, const Array &weights_array, const Array &biases_array);
+
+    // Set activation function for a specific layer or all layers
+    // layer_index: Which layer to set (-1 for all layers, 0 for first hidden layer, etc.)
+    // activation_type: 0=linear, 1=relu, 2=sigmoid, 3=tanh
+    void set_activation_function(int layer_index, int activation_type);
+
+    // Get activation function for a specific layer
+    int get_activation_function(int layer_index) const;
+
+    // Get network architecture info
+    bool is_network_initialized() const { return network_initialized; }
+    Array get_layer_sizes() const;
+    int get_num_layers() const { return layer_sizes.empty() ? 0 : static_cast<int>(layer_sizes.size() - 1); }
+
+    // Get the expected input size for this network
+    int get_input_size() const { return layer_sizes.empty() ? NN_TOTAL_INPUTS : layer_sizes[0]; }
 };
 
 #endif // NEURAL_NETWORK_H
