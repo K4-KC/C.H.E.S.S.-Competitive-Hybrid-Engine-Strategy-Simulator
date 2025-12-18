@@ -9,7 +9,7 @@ using namespace godot;
 
 // ==================== FEATURE EXTRACTION ====================
 
-void Agent::extract_features() {
+void Agent::extract_features(uint8_t color) {
     if (!board) return;
 
     // Resize and clear feature vector
@@ -17,6 +17,7 @@ void Agent::extract_features() {
     std::fill(input_features.begin(), input_features.end(), 0.0f);
 
     const uint8_t* squares = board->get_squares();
+    bool mirror_board = (color == COLOR_BLACK);
 
     // ==================== PIECE-SQUARE FEATURES (768 inputs) ====================
     // 12 planes: P, N, B, R, Q, K (white), p, n, b, r, q, k (black)
@@ -34,8 +35,11 @@ void Agent::extract_features() {
         // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
         int plane = (piece_type - 1) + (is_white ? 0 : 6);
 
+        // Mirror square horizontally if playing as black
+        int feature_square = mirror_board ? mirror_square_horizontal(sq) : sq;
+
         // Feature index = plane * 64 + square
-        int feature_idx = plane * 64 + sq;
+        int feature_idx = plane * 64 + feature_square;
         input_features[feature_idx] = 1.0f;
     }
 
@@ -43,20 +47,35 @@ void Agent::extract_features() {
     const bool* castling = board->get_castling_rights();
     int castling_offset = NN_PIECE_INPUTS;  // 768
 
-    input_features[castling_offset + 0] = castling[0] ? 1.0f : 0.0f;  // White Kingside
-    input_features[castling_offset + 1] = castling[1] ? 1.0f : 0.0f;  // White Queenside
-    input_features[castling_offset + 2] = castling[2] ? 1.0f : 0.0f;  // Black Kingside
-    input_features[castling_offset + 3] = castling[3] ? 1.0f : 0.0f;  // Black Queenside
+    if (mirror_board) {
+        // Mirror castling rights horizontally: swap white and black castling rights
+        input_features[castling_offset + 0] = castling[2] ? 1.0f : 0.0f;  // Black Kingside → position 0
+        input_features[castling_offset + 1] = castling[3] ? 1.0f : 0.0f;  // Black Queenside → position 1
+        input_features[castling_offset + 2] = castling[0] ? 1.0f : 0.0f;  // White Kingside → position 2
+        input_features[castling_offset + 3] = castling[1] ? 1.0f : 0.0f;  // White Queenside → position 3
+    } else {
+        input_features[castling_offset + 0] = castling[0] ? 1.0f : 0.0f;  // White Kingside
+        input_features[castling_offset + 1] = castling[1] ? 1.0f : 0.0f;  // White Queenside
+        input_features[castling_offset + 2] = castling[2] ? 1.0f : 0.0f;  // Black Kingside
+        input_features[castling_offset + 3] = castling[3] ? 1.0f : 0.0f;  // Black Queenside
+    }
 
     // ==================== SIDE TO MOVE (1 input) ====================
     int turn_offset = castling_offset + NN_CASTLING_INPUTS;  // 772
-    input_features[turn_offset] = (board->get_turn() == 0) ? 1.0f : 0.0f;  // 1.0 = white to move
+    if (mirror_board) {
+        // From black's mirrored perspective: 1.0 = black to move, 0.0 = white to move
+        input_features[turn_offset] = (board->get_turn() == 1) ? 1.0f : 0.0f;
+    } else {
+        input_features[turn_offset] = (board->get_turn() == 0) ? 1.0f : 0.0f;  // 1.0 = white to move
+    }
 
     // ==================== EN PASSANT (8 inputs, one-hot by file) ====================
     int ep_offset = turn_offset + NN_TURN_INPUT;  // 773
     uint8_t ep_target = board->get_en_passant_target();
     if (ep_target < 64) {
-        int ep_file = ep_target % 8;
+        // Mirror en passant square if playing as black
+        uint8_t mirrored_ep = mirror_board ? mirror_square_horizontal(ep_target) : ep_target;
+        int ep_file = mirrored_ep % 8;
         input_features[ep_offset + ep_file] = 1.0f;
     }
     // If no en passant, all 8 inputs remain 0.0
@@ -320,7 +339,14 @@ int Agent::minimax_internal(int depth, int ply, int alpha, int beta, bool is_max
     
     // Leaf node - evaluate
     if (depth == 0) {
-        int score = evaluate();
+        // Evaluate from the perspective of the player who initiated the search
+        // This is determined by checking if we're at an even or odd ply
+        // At ply 0 (root), we evaluate from current player's perspective
+        // We need to determine the root player's color
+        uint8_t root_color = (ply % 2 == 0) ? current_turn : (1 - current_turn);
+        uint8_t eval_color = (root_color == 0) ? COLOR_WHITE : COLOR_BLACK;
+
+        int score = evaluate(eval_color);
         tt_store(hash, score, 0, TT_FLAG_EXACT, 255, 255);
         return score;
     }
@@ -436,12 +462,13 @@ int Agent::minimax_internal(int depth, int ply, int alpha, int beta, bool is_max
 
 // ==================== EVALUATION ====================
 
-int Agent::evaluate() {
+int Agent::evaluate(uint8_t color) {
     if (!board) return 0;
 
     if (use_neural_network && network_initialized) {
         // Extract features and run neural network
-        extract_features();
+        // Board will be mirrored if color is COLOR_BLACK
+        extract_features(color);
         float nn_score = forward_pass(input_features);
 
         // Convert float score to centipawns
@@ -487,7 +514,22 @@ Array Agent::get_features() {
 
     if (!board) return result;
 
-    extract_features();
+    // Default to white's perspective for backward compatibility
+    extract_features(COLOR_WHITE);
+
+    for (size_t i = 0; i < input_features.size(); i++) {
+        result.append(input_features[i]);
+    }
+
+    return result;
+}
+
+Array Agent::get_features_for_color(uint8_t color) {
+    Array result;
+
+    if (!board) return result;
+
+    extract_features(color);
 
     for (size_t i = 0; i < input_features.size(); i++) {
         result.append(input_features[i]);
@@ -706,9 +748,10 @@ void Agent::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_board"), &Agent::get_board);
 
     // Evaluation
-    ClassDB::bind_method(D_METHOD("evaluate"), &Agent::evaluate);
+    ClassDB::bind_method(D_METHOD("evaluate", "color"), &Agent::evaluate);
     ClassDB::bind_method(D_METHOD("evaluate_material"), &Agent::evaluate_material);
     ClassDB::bind_method(D_METHOD("get_features"), &Agent::get_features);
+    ClassDB::bind_method(D_METHOD("get_features_for_color", "color"), &Agent::get_features_for_color);
 
     // Neural network control
     ClassDB::bind_method(D_METHOD("set_use_neural_network", "use_nn"), &Agent::set_use_neural_network);

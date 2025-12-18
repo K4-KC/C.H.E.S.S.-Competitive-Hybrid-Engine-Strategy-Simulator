@@ -2,10 +2,39 @@
 #define AGENT_H
 
 #include "neural_network.h"
+#include "board.h"
 #include <godot_cpp/variant/dictionary.hpp>
 #include <cstdint>
 
 using namespace godot;
+
+// ==================== NEURAL NETWORK INPUT CONFIGURATION ====================
+
+// Input layer size: 12 piece types × 64 squares + extras
+// Piece planes: P, N, B, R, Q, K (white), p, n, b, r, q, k (black)
+#define NN_PIECE_PLANES     12
+#define NN_SQUARES          64
+#define NN_PIECE_INPUTS     (NN_PIECE_PLANES * NN_SQUARES)  // 768
+
+// Additional inputs
+#define NN_CASTLING_INPUTS  4   // WK, WQ, BK, BQ
+#define NN_TURN_INPUT       1   // Side to move (1.0 = white, 0.0 = black)
+#define NN_EP_INPUTS        8   // En passant file (one-hot, or 0 if none)
+
+// Total input size
+#define NN_TOTAL_INPUTS     (NN_PIECE_INPUTS + NN_CASTLING_INPUTS + NN_TURN_INPUT + NN_EP_INPUTS)  // 781
+
+// ==================== EVALUATION CONSTANTS ====================
+
+#define CHECKMATE_SCORE 100000
+#define STALEMATE_SCORE 0
+
+// Piece values for fallback/material evaluation (centipawns)
+#define PAWN_VALUE   100
+#define KNIGHT_VALUE 320
+#define BISHOP_VALUE 330
+#define ROOK_VALUE   500
+#define QUEEN_VALUE  900
 
 // ==================== MOVE ORDERING CONSTANTS ====================
 
@@ -66,7 +95,16 @@ private:
     std::vector<float> input_features;
 
     // Extract board state into neural network input format
-    void extract_features();
+    // If color is COLOR_BLACK (16), mirrors the board horizontally
+    void extract_features(uint8_t color);
+
+    // Mirror a square index horizontally (rank 0 ↔ rank 7, etc.)
+    inline uint8_t mirror_square_horizontal(uint8_t square) const {
+        int rank = square / 8;
+        int file = square % 8;
+        int mirrored_rank = 7 - rank;
+        return mirrored_rank * 8 + file;
+    }
 
     // ==================== TRANSPOSITION TABLE ====================
     static TTEntry* tt_table;
@@ -121,14 +159,18 @@ public:
     Board* get_board() const { return board; }
 
     // ==================== EVALUATION ====================
-    // Main evaluation function - returns score from white's perspective
-    int evaluate();
+    // Main evaluation function - returns score from the given color's perspective
+    // color: COLOR_WHITE (8) or COLOR_BLACK (16)
+    int evaluate(uint8_t color);
 
     // Simple material evaluation (fallback/baseline)
     int evaluate_material() const;
 
-    // Debug: Get raw feature vector as Array
+    // Debug: Get raw feature vector as Array (from white's perspective)
     Array get_features();
+
+    // Get features from a specific color's perspective
+    Array get_features_for_color(uint8_t color);
 
     // ==================== NEURAL NETWORK CONTROL ====================
     // Enable/disable neural network evaluation
