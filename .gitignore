@@ -13,9 +13,7 @@
 src/*.obj
 
 /venv
-*.dll
 *.lib
 *.exp
 *.dblite
 *.os
-*.so
