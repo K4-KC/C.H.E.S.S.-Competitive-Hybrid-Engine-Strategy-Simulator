@@ -2,6 +2,8 @@
 #define NEURAL_NETWORK_H
 
 #include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <cstdint>
@@ -77,9 +79,16 @@ public:
     // Example: [100, 64, 32, 1] creates a network with 100 inputs, 2 hidden layers (64 and 32 neurons), and 1 output
     void initialize_neural_network(const Array &layer_sizes_array, const String &default_activation = "sigmoid");
 
-    // Load neural network weights from file
-    // PLACEHOLDER: Will load ONNX model
-    bool load_network(const String &path);
+    // Save neural network to file (architecture + weights + biases)
+    // Saves to res://models/ directory by default
+    // Returns true on success
+    bool save_network(const String &filename);
+
+    // Load neural network from file (architecture + weights + biases)
+    // Loads from res://models/ directory by default
+    // Completely reinitializes the network with loaded data
+    // Returns true on success
+    bool load_network(const String &filename);
 
     // Set weights and biases for a specific layer
     // layer_index: Which layer to set (0 = first hidden layer, etc.)

@@ -72,7 +72,7 @@ void Agent::extract_features(uint8_t color) {
     // ==================== EN PASSANT (8 inputs, one-hot by file) ====================
     int ep_offset = turn_offset + NN_TURN_INPUT;  // 773
     uint8_t ep_target = board->get_en_passant_target();
-    if (ep_target < 64) {
+    if (ep_target != 255) {
         // Mirror en passant square if playing as black
         uint8_t mirrored_ep = mirror_board ? mirror_square_horizontal(ep_target) : ep_target;
         int ep_file = mirrored_ep % 8;

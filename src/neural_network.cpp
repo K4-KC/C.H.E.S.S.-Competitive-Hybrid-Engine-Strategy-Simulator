@@ -377,22 +377,230 @@ String NeuralNet::get_activation_function(int layer_index) const {
     return activation_int_to_string(activation_functions[layer_index]);
 }
 
-bool NeuralNet::load_network(const String &path) {
-    // ==================== PLACEHOLDER FOR MODEL LOADING ====================
-    //
-    // TODO: Implement model loading from file:
-    //
-    // 1. Load network architecture (layer sizes, activation functions)
-    // 2. Load weights and biases for each layer
-    // 3. Initialize the network with loaded parameters
-    // 4. Return true on success
-    //
-    // ==================== END PLACEHOLDER ====================
+bool NeuralNet::save_network(const String &filename) {
+    if (!network_initialized) {
+        UtilityFunctions::print("Error: Cannot save uninitialized network");
+        return false;
+    }
 
-    UtilityFunctions::print("NeuralNet::load_network() - PLACEHOLDER: Would load model from ", path);
-    UtilityFunctions::print("Model loading not yet implemented.");
+    // Ensure models directory exists
+    Ref<DirAccess> dir = DirAccess::open("res://");
+    if (dir.is_null()) {
+        UtilityFunctions::print("Error: Cannot access res:// directory");
+        return false;
+    }
 
-    return false;
+    if (!dir->dir_exists("models")) {
+        Error err = dir->make_dir("models");
+        if (err != OK) {
+            UtilityFunctions::print("Error: Cannot create models directory");
+            return false;
+        }
+    }
+
+    // Construct full path
+    String full_path = "res://models/" + filename;
+    if (!full_path.ends_with(".nn")) {
+        full_path += ".nn";
+    }
+
+    // Open file for writing
+    Ref<FileAccess> file = FileAccess::open(full_path, FileAccess::WRITE);
+    if (file.is_null()) {
+        UtilityFunctions::print("Error: Cannot open file for writing: ", full_path);
+        return false;
+    }
+
+    // ==================== FILE FORMAT ====================
+    // Magic number (4 bytes): "NNWB" (Neural Network Weights Binary)
+    // Version (4 bytes): 1
+    // Num layers (4 bytes)
+    // Layer sizes (num_layers * 4 bytes)
+    // Num hidden layers (4 bytes)
+    // Activation functions (num_hidden_layers * 4 bytes)
+    // For each weight layer:
+    //   - Num weights (4 bytes)
+    //   - Weights (num_weights * 4 bytes as floats)
+    //   - Num biases (4 bytes)
+    //   - Biases (num_biases * 4 bytes as floats)
+    // ==================== END FORMAT ====================
+
+    // Write magic number
+    file->store_8('N');
+    file->store_8('N');
+    file->store_8('W');
+    file->store_8('B');
+
+    // Write version
+    file->store_32(1);
+
+    // Write layer sizes
+    file->store_32(layer_sizes.size());
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        file->store_32(layer_sizes[i]);
+    }
+
+    // Write activation functions
+    file->store_32(activation_functions.size());
+    for (size_t i = 0; i < activation_functions.size(); i++) {
+        file->store_32(activation_functions[i]);
+    }
+
+    // Write weights and biases
+    for (size_t layer = 0; layer < weights.size(); layer++) {
+        int output_size = layer_sizes[layer + 1];
+        int input_size = layer_sizes[layer];
+
+        // Write weights for this layer
+        file->store_32(output_size * input_size);
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            for (int input = 0; input < input_size; input++) {
+                file->store_float(weights[layer][neuron][input]);
+            }
+        }
+
+        // Write biases for this layer
+        file->store_32(output_size);
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            file->store_float(biases[layer][neuron]);
+        }
+    }
+
+    file->close();
+
+    UtilityFunctions::print("Neural network saved successfully to ", full_path);
+    return true;
+}
+
+bool NeuralNet::load_network(const String &filename) {
+    // Construct full path
+    String full_path = "res://models/" + filename;
+    if (!full_path.ends_with(".nn")) {
+        full_path += ".nn";
+    }
+
+    // Open file for reading
+    Ref<FileAccess> file = FileAccess::open(full_path, FileAccess::READ);
+    if (file.is_null()) {
+        UtilityFunctions::print("Error: Cannot open file for reading: ", full_path);
+        return false;
+    }
+
+    // Read and validate magic number
+    char magic[4];
+    magic[0] = file->get_8();
+    magic[1] = file->get_8();
+    magic[2] = file->get_8();
+    magic[3] = file->get_8();
+
+    if (magic[0] != 'N' || magic[1] != 'N' || magic[2] != 'W' || magic[3] != 'B') {
+        UtilityFunctions::print("Error: Invalid file format (bad magic number)");
+        file->close();
+        return false;
+    }
+
+    // Read version
+    uint32_t version = file->get_32();
+    if (version != 1) {
+        UtilityFunctions::print("Error: Unsupported file version: ", version);
+        file->close();
+        return false;
+    }
+
+    // Clear existing network
+    layer_sizes.clear();
+    weights.clear();
+    biases.clear();
+    activations.clear();
+    activation_functions.clear();
+    network_initialized = false;
+
+    // Read layer sizes
+    uint32_t num_layers = file->get_32();
+    layer_sizes.resize(num_layers);
+    for (uint32_t i = 0; i < num_layers; i++) {
+        layer_sizes[i] = file->get_32();
+    }
+
+    // Read activation functions
+    uint32_t num_activations = file->get_32();
+    activation_functions.resize(num_activations);
+    for (uint32_t i = 0; i < num_activations; i++) {
+        activation_functions[i] = file->get_32();
+    }
+
+    // Initialize weight and bias storage
+    int num_weight_layers = layer_sizes.size() - 1;
+    weights.resize(num_weight_layers);
+    biases.resize(num_weight_layers);
+
+    // Read weights and biases
+    for (int layer = 0; layer < num_weight_layers; layer++) {
+        int output_size = layer_sizes[layer + 1];
+        int input_size = layer_sizes[layer];
+
+        // Read weights
+        uint32_t num_weights = file->get_32();
+        if (num_weights != static_cast<uint32_t>(output_size * input_size)) {
+            UtilityFunctions::print("Error: Weight count mismatch at layer ", layer);
+            file->close();
+            return false;
+        }
+
+        weights[layer].resize(output_size);
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            weights[layer][neuron].resize(input_size);
+            for (int input = 0; input < input_size; input++) {
+                weights[layer][neuron][input] = file->get_float();
+            }
+        }
+
+        // Read biases
+        uint32_t num_biases = file->get_32();
+        if (num_biases != static_cast<uint32_t>(output_size)) {
+            UtilityFunctions::print("Error: Bias count mismatch at layer ", layer);
+            file->close();
+            return false;
+        }
+
+        biases[layer].resize(output_size);
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            biases[layer][neuron] = file->get_float();
+        }
+    }
+
+    // Initialize activation storage
+    activations.resize(layer_sizes.size());
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        activations[i].resize(layer_sizes[i]);
+    }
+
+    network_initialized = true;
+
+    file->close();
+
+    // Print loaded network info
+    UtilityFunctions::print("Neural network loaded successfully from ", full_path);
+    String arch = "  Architecture: [";
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        arch += String::num_int64(layer_sizes[i]);
+        if (i < layer_sizes.size() - 1) arch += ", ";
+    }
+    arch += "]";
+    UtilityFunctions::print(arch);
+
+    // Print activation functions
+    String activation_names[] = {"linear", "relu", "sigmoid", "tanh"};
+    String activations_str = "  Activations: [";
+    for (size_t i = 0; i < activation_functions.size(); i++) {
+        int act_type = activation_functions[i];
+        activations_str += (act_type >= 0 && act_type <= 3) ? activation_names[act_type] : "unknown";
+        activations_str += ", ";
+    }
+    activations_str += "sigmoid]";  // Output layer always uses sigmoid
+    UtilityFunctions::print(activations_str);
+
+    return true;
 }
 
 // ==================== CONSTRUCTOR/DESTRUCTOR ====================
@@ -415,7 +623,8 @@ void NeuralNet::_bind_methods() {
 
     // Neural network utilities
     ClassDB::bind_method(D_METHOD("initialize_neural_network", "layer_sizes", "activation"), &NeuralNet::initialize_neural_network, DEFVAL("sigmoid"));
-    ClassDB::bind_method(D_METHOD("load_network", "path"), &NeuralNet::load_network);
+    ClassDB::bind_method(D_METHOD("save_network", "filename"), &NeuralNet::save_network);
+    ClassDB::bind_method(D_METHOD("load_network", "filename"), &NeuralNet::load_network);
     ClassDB::bind_method(D_METHOD("set_layer_weights", "layer_index", "weights", "biases"), &NeuralNet::set_layer_weights);
     ClassDB::bind_method(D_METHOD("set_activation_function", "layer_index", "activation_type"), &NeuralNet::set_activation_function);
     ClassDB::bind_method(D_METHOD("get_activation_function", "layer_index"), &NeuralNet::get_activation_function);
