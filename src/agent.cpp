@@ -740,6 +740,92 @@ void Agent::_ready() {
     NeuralNet::_ready();
 }
 
+// ==================== TRAINING METHODS ====================
+
+float Agent::score_to_target(int material_score) const {
+    // Convert centipawn score to a 0.0-1.0 range using a sigmoid-like function
+    // This creates a smooth mapping:
+    // - Score of +300 (3 pawns ahead) → ~0.75
+    // - Score of 0 (equal) → 0.5
+    // - Score of -300 (3 pawns behind) → ~0.25
+    // - Score of ±1000 → ~0.88 / ~0.12
+
+    // Scale factor determines the steepness of the sigmoid
+    // Larger scale = more gradual transition
+    const float scale = 600.0f;  // Tuned for centipawn scores
+
+    // Sigmoid formula: 1 / (1 + exp(-x / scale))
+    float normalized_score = static_cast<float>(material_score) / scale;
+    float target = 1.0f / (1.0f + std::exp(-normalized_score));
+
+    // Clamp to [0.01, 0.99] to avoid extreme targets
+    if (target < 0.01f) target = 0.01f;
+    if (target > 0.99f) target = 0.99f;
+
+    return target;
+}
+
+float Agent::train_on_current_position(uint8_t color, float learning_rate) {
+    if (!board || !network_initialized || !use_neural_network) {
+        return 0.0f;
+    }
+
+    // 1. Extract features from current position
+    extract_features(color);
+
+    // 2. Get material evaluation as target
+    int material_score = evaluate_material();
+
+    // Adjust score from the perspective of the given color
+    // If training from black's perspective, negate the score
+    if (color == COLOR_BLACK) {
+        material_score = -material_score;
+    }
+
+    // 3. Convert score to 0.0-1.0 target range
+    float target = score_to_target(material_score);
+
+    // 4. Convert input_features to Array for training
+    Array input_array;
+    for (const float& feature : input_features) {
+        input_array.append(feature);
+    }
+
+    // 5. Train on this example
+    float loss = train_single_example(input_array, target, learning_rate);
+
+    return loss;
+}
+
+float Agent::train_on_batch(const Array &positions, const Array &targets, float learning_rate) {
+    if (!network_initialized || !use_neural_network) {
+        return 0.0f;
+    }
+
+    if (positions.size() != targets.size()) {
+        UtilityFunctions::print("Error: positions and targets arrays must have the same size");
+        return 0.0f;
+    }
+
+    if (positions.size() == 0) {
+        return 0.0f;
+    }
+
+    float total_loss = 0.0f;
+
+    // Train on each position in the batch
+    for (int i = 0; i < positions.size(); i++) {
+        Array position_features = positions[i];
+        float target = targets[i];
+
+        float loss = train_single_example(position_features, target, learning_rate);
+        total_loss += loss;
+    }
+
+    // Return average loss
+    return total_loss / positions.size();
+}
+
 // ==================== GODOT BINDINGS ====================
 
 void Agent::_bind_methods() {
@@ -760,4 +846,9 @@ void Agent::_bind_methods() {
     // Search methods
     ClassDB::bind_method(D_METHOD("run_iterative_deepening", "max_depth"), &Agent::run_iterative_deepening);
     ClassDB::bind_method(D_METHOD("get_best_move", "depth"), &Agent::get_best_move);
+
+    // Training methods
+    ClassDB::bind_method(D_METHOD("train_on_current_position", "color", "learning_rate"), &Agent::train_on_current_position);
+    ClassDB::bind_method(D_METHOD("train_on_batch", "positions", "targets", "learning_rate"), &Agent::train_on_batch);
+    ClassDB::bind_method(D_METHOD("score_to_target", "material_score"), &Agent::score_to_target);
 }

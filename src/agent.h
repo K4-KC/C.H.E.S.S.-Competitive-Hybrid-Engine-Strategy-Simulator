@@ -180,6 +180,26 @@ public:
     // ==================== SEARCH INTERFACE ====================
     Dictionary run_iterative_deepening(int max_depth);
     Dictionary get_best_move(int depth);
+
+    // ==================== TRAINING INTERFACE ====================
+    // Train on the current board position using material evaluation as target
+    // This trains the neural network to match the material evaluation function
+    // color: The perspective to train from (COLOR_WHITE or COLOR_BLACK)
+    // learning_rate: Step size for gradient descent
+    // Returns the loss (mean squared error)
+    float train_on_current_position(uint8_t color, float learning_rate);
+
+    // Train on a batch of positions collected during a game
+    // positions: Array of feature vectors (each is an Array of 781 floats)
+    // targets: Array of target values (floats between 0.0 and 1.0)
+    // learning_rate: Step size for gradient descent
+    // Returns average loss across the batch
+    float train_on_batch(const Array &positions, const Array &targets, float learning_rate);
+
+    // Convert material evaluation score to a 0.0-1.0 target for neural network training
+    // Positive scores (good for current color) → values closer to 1.0
+    // Negative scores (bad for current color) → values closer to 0.0
+    float score_to_target(int material_score) const;
 };
 
 #endif // AGENT_H

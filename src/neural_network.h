@@ -40,6 +40,18 @@ protected:
     // Network initialized flag
     bool network_initialized;
 
+    // ==================== TRAINING INFRASTRUCTURE ====================
+
+    // Gradients for backpropagation (same structure as weights/biases)
+    std::vector<std::vector<std::vector<float>>> weight_gradients;
+    std::vector<std::vector<float>> bias_gradients;
+
+    // Pre-activation values (z values before activation function)
+    std::vector<std::vector<float>> z_values;
+
+    // Delta values for backpropagation
+    std::vector<std::vector<float>> deltas;
+
     // Forward pass through neural network with provided input features
     // Returns the network output value (between 0 and 1 via sigmoid)
     float forward_pass(const std::vector<float> &input_features);
@@ -113,6 +125,32 @@ public:
 
     // Get the expected input size for this network
     int get_input_size() const { return layer_sizes.empty() ? 0 : layer_sizes[0]; }
+
+    // ==================== TRAINING METHODS ====================
+
+    // Train on a single example (forward + backward pass + weight update)
+    // input_features: The input vector (board state features)
+    // target_output: The desired output (0.0 to 1.0)
+    // learning_rate: Step size for gradient descent
+    // Returns the loss (mean squared error)
+    float train_single_example(const Array &input_features, float target_output, float learning_rate);
+
+    // Backpropagation: Compute gradients for a single example
+    // target_output: The desired output value
+    void backpropagate(float target_output);
+
+    // Update weights and biases using computed gradients
+    // learning_rate: Step size for gradient descent
+    void update_weights(float learning_rate);
+
+    // Clear all gradients (reset to zero)
+    void clear_gradients();
+
+    // Derivative of activation functions
+    inline float relu_derivative(float z) const { return (z > 0.0f) ? 1.0f : 0.0f; }
+    inline float sigmoid_derivative(float activation) const { return activation * (1.0f - activation); }
+    inline float tanh_derivative(float activation) const { return 1.0f - activation * activation; }
+    inline float linear_derivative(float z) const { return 1.0f; }
 };
 
 #endif // NEURAL_NETWORK_H

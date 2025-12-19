@@ -11,11 +11,18 @@ const BOARD_OFFSET = Vector2(8, 8)
 const AI_DEPTH = 5  # Maximum search depth for Iterative Deepening
 
 # Training Configuration
-var TRAINING_MODE = false  # Toggle this to enable/disable training
+# TRAINING_MODE options:
+#   0 = "none" - No training (inference only)
+#   1 = "heuristic" - Train using material evaluation as supervision
+#   2 = "distillation" - Train using tree search evaluations (requires pre-trained model)
+var TRAINING_MODE = 1  # 0=none, 1=heuristic, 2=distillation
 const SAVE_MODELS_AFTER_GAME = true  # Auto-save models after game ends
 const MODEL_WHITE_PATH = "res://assets/models/white_agent.nn"
 const MODEL_BLACK_PATH = "res://assets/models/black_agent.nn"
 const LOAD_MODELS_ON_START = false  # Set to true to load existing models
+const LEARNING_RATE = 0.001  # Learning rate for gradient descent
+const TRAIN_EVERY_N_MOVES = 1  # Train after every N moves (1 = train after each move)
+const DISTILLATION_SEARCH_DEPTH = 3  # Depth for tree search in distillation mode
 
 # Piece type constants (must match board.h)
 const PIECE_NONE = 0
@@ -65,6 +72,12 @@ var status_label: Label = null
 var move_count: int = 0
 var game_finished: bool = false
 
+# Training data
+var training_positions = []  # Stores board positions (feature vectors) from the game
+var training_targets = []    # Stores target values for each position
+var total_training_loss = 0.0
+var num_training_examples = 0
+
 func _ready():
 	var hl_node = Node2D.new()
 	hl_node.name = "Highlights"
@@ -104,8 +117,11 @@ func _ready():
 	board.setup_board(start_fen)
 	refresh_visuals()
 
+	var training_mode_names = ["None (Inference Only)", "Heuristic (Material Eval)", "Distillation (Tree Search)"]
 	print("Computer vs Computer Mode Ready.")
-	print("Training Mode: %s" % ("ON" if TRAINING_MODE else "OFF"))
+	print("Training Mode: %s" % training_mode_names[TRAINING_MODE])
+	if TRAINING_MODE == 2:
+		print("  Distillation Search Depth: %d" % DISTILLATION_SEARCH_DEPTH)
 	print("AI Max Depth: %d (Iterative Deepening)" % AI_DEPTH)
 	print("White Agent: Neural Network %s" % ("Enabled" if white_agent.get_use_neural_network() else "Disabled"))
 	print("Black Agent: Neural Network %s" % ("Enabled" if black_agent.get_use_neural_network() else "Disabled"))
@@ -138,9 +154,9 @@ func setup_agents():
 			black_agent.set_use_neural_network(false)
 	else:
 		# Initialize fresh neural networks or use material evaluation
-		if TRAINING_MODE:
-			# In training mode, initialize neural networks with random weights
-			print("\nInitializing neural networks for training...")
+		if TRAINING_MODE == 1:
+			# Heuristic training: Initialize neural networks with random weights
+			print("\nInitializing neural networks for heuristic training...")
 
 			# Network architecture: 781 inputs (board features) -> hidden layers -> 1 output
 			# Using a simple architecture: 781 -> 256 -> 128 -> 1
@@ -153,8 +169,27 @@ func setup_agents():
 			black_agent.initialize_neural_network(layer_sizes, "relu")
 			black_agent.set_use_neural_network(true)
 			print("Black agent initialized with architecture: %s" % str(layer_sizes))
+
+		elif TRAINING_MODE == 2:
+			# Distillation training: MUST load existing models
+			print("\nDistillation mode requires pre-trained models...")
+
+			var white_loaded = white_agent.load_network(MODEL_WHITE_PATH)
+			var black_loaded = black_agent.load_network(MODEL_BLACK_PATH)
+
+			if not white_loaded or not black_loaded:
+				print("ERROR: Distillation mode requires existing trained models!")
+				print("Please run heuristic training first (TRAINING_MODE = 1)")
+				print("Falling back to material evaluation only.")
+				white_agent.set_use_neural_network(false)
+				black_agent.set_use_neural_network(false)
+				TRAINING_MODE = 0
+			else:
+				white_agent.set_use_neural_network(true)
+				black_agent.set_use_neural_network(true)
+				print("Models loaded successfully for distillation training")
 		else:
-			# In non-training mode without loading, use material evaluation only
+			# No training mode: use material evaluation only
 			print("\nUsing material evaluation (no neural network).")
 			white_agent.set_use_neural_network(false)
 			black_agent.set_use_neural_network(false)
@@ -338,6 +373,10 @@ func _on_ai_search_complete(best_move: Dictionary, color: int):
 	refresh_visuals()
 	move_count += 1
 
+	# Train on the position if in training mode
+	if TRAINING_MODE > 0 and (move_count % TRAIN_EVERY_N_MOVES == 0):
+		train_agents_on_current_position()
+
 	var game_over = check_game_over()
 
 	if not game_over:
@@ -346,8 +385,10 @@ func _on_ai_search_complete(best_move: Dictionary, color: int):
 	else:
 		# Game is over
 		game_finished = true
-		if TRAINING_MODE and SAVE_MODELS_AFTER_GAME:
-			save_trained_models()
+		if TRAINING_MODE > 0:
+			finalize_training()
+			if SAVE_MODELS_AFTER_GAME:
+				save_trained_models()
 
 func cleanup_thread():
 	if ai_thread != null:
@@ -385,6 +426,86 @@ func check_game_over() -> bool:
 	return false
 
 # --- Training & Model Management ---
+
+func train_agents_on_current_position():
+	"""Train both agents on the current position based on training mode."""
+	if TRAINING_MODE == 0:
+		return
+
+	var white_loss = 0.0
+	var black_loss = 0.0
+
+	if TRAINING_MODE == 1:
+		# Heuristic Training: Use material evaluation as supervision
+		white_loss = train_heuristic(white_agent, COLOR_WHITE)
+		black_loss = train_heuristic(black_agent, COLOR_BLACK)
+
+	elif TRAINING_MODE == 2:
+		# Distillation Training: Use tree search evaluation as supervision
+		white_loss = train_distillation(white_agent, COLOR_WHITE)
+		black_loss = train_distillation(black_agent, COLOR_BLACK)
+
+	# Track training statistics
+	total_training_loss += white_loss + black_loss
+	num_training_examples += 2
+
+	# Print training progress every 10 moves
+	if move_count % 10 == 0:
+		var avg_loss = total_training_loss / num_training_examples if num_training_examples > 0 else 0.0
+		var mode_name = "Heuristic" if TRAINING_MODE == 1 else "Distillation"
+		print("  [%s Training] Move %d | Avg Loss: %.6f | White Loss: %.6f | Black Loss: %.6f" %
+			  [mode_name, move_count, avg_loss, white_loss, black_loss])
+
+func train_heuristic(agent: Agent, color: int) -> float:
+	"""Train agent using material evaluation as target (heuristic training)."""
+	# Simply delegate to the agent's built-in method
+	return agent.train_on_current_position(color, LEARNING_RATE)
+
+func train_distillation(agent: Agent, color: int) -> float:
+	"""Train agent using tree search evaluation as target (distillation training)."""
+
+	# 1. Extract features from current position
+	var features = agent.get_features_for_color(color)
+
+	# 2. Perform shallow tree search to get "teacher" evaluation
+	# This search uses the neural network + minimax to get a better evaluation
+	var search_result = agent.run_iterative_deepening(DISTILLATION_SEARCH_DEPTH)
+
+	if search_result.is_empty():
+		return 0.0
+
+	# 3. Get the evaluation score from the search
+	var search_score = search_result.get("score", 0)
+
+	# 4. Convert the search score to a training target (0.0 to 1.0)
+	var target = agent.score_to_target(search_score)
+
+	# 5. Train the network to match this target
+	# This teaches the network to "distill" the knowledge from tree search
+	var loss = agent.train_single_example(features, target, LEARNING_RATE)
+
+	return loss
+
+func finalize_training():
+	"""Called at the end of the game to finalize training."""
+	if TRAINING_MODE == 0:
+		return
+
+	var avg_loss = total_training_loss / num_training_examples if num_training_examples > 0 else 0.0
+	var mode_names = ["", "Heuristic", "Distillation"]
+
+	print("\n=== TRAINING SUMMARY ===")
+	print("Training Mode: %s" % mode_names[TRAINING_MODE])
+	print("Total positions trained: %d" % num_training_examples)
+	print("Average loss: %.6f" % avg_loss)
+	print("Final material evaluation:")
+	print("  White's perspective: %d centipawns" % white_agent.evaluate_material())
+	print("  Black's perspective: %d centipawns" % (-white_agent.evaluate_material()))
+
+	if TRAINING_MODE == 2:
+		print("\nDistillation Training Info:")
+		print("  Search depth used: %d" % DISTILLATION_SEARCH_DEPTH)
+		print("  This amplified the network's knowledge through tree search")
 
 func save_trained_models():
 	"""Save both agent models after training."""

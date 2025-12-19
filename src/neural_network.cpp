@@ -18,6 +18,7 @@ void NeuralNet::forward_pass_linear(size_t layer_idx) {
         for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
             sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
         }
+        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
         activations[layer_idx][neuron] = sum;  // Linear activation (no transformation)
     }
 }
@@ -32,6 +33,7 @@ void NeuralNet::forward_pass_relu(size_t layer_idx) {
         for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
             sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
         }
+        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
         activations[layer_idx][neuron] = relu(sum);
     }
 }
@@ -46,6 +48,7 @@ void NeuralNet::forward_pass_sigmoid(size_t layer_idx) {
         for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
             sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
         }
+        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
         activations[layer_idx][neuron] = sigmoid(sum);
     }
 }
@@ -60,6 +63,7 @@ void NeuralNet::forward_pass_tanh(size_t layer_idx) {
         for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
             sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
         }
+        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
         activations[layer_idx][neuron] = tanh_activation(sum);
     }
 }
@@ -245,6 +249,29 @@ void NeuralNet::initialize_neural_network(const Array &layer_sizes_array, const 
     activations.resize(layer_sizes.size());
     for (size_t i = 0; i < layer_sizes.size(); i++) {
         activations[i].resize(layer_sizes[i]);
+    }
+
+    // Initialize training-related storage
+    weight_gradients.resize(num_weight_layers);
+    bias_gradients.resize(num_weight_layers);
+    z_values.resize(layer_sizes.size());
+    deltas.resize(layer_sizes.size());
+
+    for (int layer = 0; layer < num_weight_layers; layer++) {
+        int input_size = layer_sizes[layer];
+        int output_size = layer_sizes[layer + 1];
+
+        weight_gradients[layer].resize(output_size);
+        bias_gradients[layer].resize(output_size, 0.0f);
+
+        for (int neuron = 0; neuron < output_size; neuron++) {
+            weight_gradients[layer][neuron].resize(input_size, 0.0f);
+        }
+    }
+
+    for (size_t i = 0; i < layer_sizes.size(); i++) {
+        z_values[i].resize(layer_sizes[i], 0.0f);
+        deltas[i].resize(layer_sizes[i], 0.0f);
     }
 
     network_initialized = true;
@@ -615,6 +642,143 @@ NeuralNet::~NeuralNet() {
 void NeuralNet::_ready() {
 }
 
+// ==================== TRAINING METHODS ====================
+
+void NeuralNet::clear_gradients() {
+    for (size_t layer = 0; layer < weight_gradients.size(); layer++) {
+        for (size_t neuron = 0; neuron < weight_gradients[layer].size(); neuron++) {
+            for (size_t input = 0; input < weight_gradients[layer][neuron].size(); input++) {
+                weight_gradients[layer][neuron][input] = 0.0f;
+            }
+            bias_gradients[layer][neuron] = 0.0f;
+        }
+    }
+}
+
+void NeuralNet::backpropagate(float target_output) {
+    if (!network_initialized) {
+        return;
+    }
+
+    int num_layers = layer_sizes.size();
+
+    // 1. Compute output layer delta (error signal)
+    int output_layer = num_layers - 1;
+    float output = activations[output_layer][0];
+
+    // dL/doutput = output - target (for MSE loss)
+    float output_error = output - target_output;
+
+    // delta = dL/doutput * sigmoid'(output)
+    deltas[output_layer][0] = output_error * sigmoid_derivative(output);
+
+    // 2. Backpropagate through hidden layers
+    for (int layer = num_layers - 2; layer >= 1; layer--) {
+        int current_size = layer_sizes[layer];
+        int next_size = layer_sizes[layer + 1];
+        int activation_type = (layer - 1 < static_cast<int>(activation_functions.size())) ?
+                              activation_functions[layer - 1] : 2;
+
+        for (int neuron = 0; neuron < current_size; neuron++) {
+            float sum = 0.0f;
+
+            // Sum weighted deltas from next layer
+            for (int next_neuron = 0; next_neuron < next_size; next_neuron++) {
+                sum += deltas[layer + 1][next_neuron] * weights[layer][next_neuron][neuron];
+            }
+
+            // Apply derivative of activation function
+            float derivative;
+            switch (activation_type) {
+                case 0: // linear
+                    derivative = linear_derivative(z_values[layer][neuron]);
+                    break;
+                case 1: // relu
+                    derivative = relu_derivative(z_values[layer][neuron]);
+                    break;
+                case 2: // sigmoid
+                    derivative = sigmoid_derivative(activations[layer][neuron]);
+                    break;
+                case 3: // tanh
+                    derivative = tanh_derivative(activations[layer][neuron]);
+                    break;
+                default:
+                    derivative = sigmoid_derivative(activations[layer][neuron]);
+            }
+
+            deltas[layer][neuron] = sum * derivative;
+        }
+    }
+
+    // 3. Compute gradients for all layers
+    for (int layer = 0; layer < num_layers - 1; layer++) {
+        int prev_size = layer_sizes[layer];
+        int curr_size = layer_sizes[layer + 1];
+
+        for (int neuron = 0; neuron < curr_size; neuron++) {
+            // Bias gradient
+            bias_gradients[layer][neuron] += deltas[layer + 1][neuron];
+
+            // Weight gradients
+            for (int prev_neuron = 0; prev_neuron < prev_size; prev_neuron++) {
+                weight_gradients[layer][neuron][prev_neuron] +=
+                    deltas[layer + 1][neuron] * activations[layer][prev_neuron];
+            }
+        }
+    }
+}
+
+void NeuralNet::update_weights(float learning_rate) {
+    if (!network_initialized) {
+        return;
+    }
+
+    // Update all weights and biases using gradient descent
+    for (size_t layer = 0; layer < weights.size(); layer++) {
+        for (size_t neuron = 0; neuron < weights[layer].size(); neuron++) {
+            // Update bias
+            biases[layer][neuron] -= learning_rate * bias_gradients[layer][neuron];
+
+            // Update weights
+            for (size_t input = 0; input < weights[layer][neuron].size(); input++) {
+                weights[layer][neuron][input] -= learning_rate * weight_gradients[layer][neuron][input];
+            }
+        }
+    }
+}
+
+float NeuralNet::train_single_example(const Array &input_array, float target_output, float learning_rate) {
+    if (!network_initialized) {
+        UtilityFunctions::print("Error: Network not initialized");
+        return 0.0f;
+    }
+
+    // Convert Array to std::vector<float>
+    std::vector<float> input_vec;
+    input_vec.reserve(input_array.size());
+    for (int i = 0; i < input_array.size(); i++) {
+        input_vec.push_back(input_array[i]);
+    }
+
+    // 1. Forward pass (also stores activations and z-values)
+    float output = forward_pass(input_vec);
+
+    // 2. Compute loss (Mean Squared Error)
+    float error = output - target_output;
+    float loss = error * error;
+
+    // 3. Clear previous gradients
+    clear_gradients();
+
+    // 4. Backpropagation (compute gradients)
+    backpropagate(target_output);
+
+    // 5. Update weights
+    update_weights(learning_rate);
+
+    return loss;
+}
+
 // ==================== GODOT BINDINGS ====================
 
 void NeuralNet::_bind_methods() {
@@ -632,5 +796,8 @@ void NeuralNet::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_layer_sizes"), &NeuralNet::get_layer_sizes);
     ClassDB::bind_method(D_METHOD("get_num_layers"), &NeuralNet::get_num_layers);
     ClassDB::bind_method(D_METHOD("get_input_size"), &NeuralNet::get_input_size);
+
+    // Training methods
+    ClassDB::bind_method(D_METHOD("train_single_example", "input_features", "target_output", "learning_rate"), &NeuralNet::train_single_example);
 }
 
