@@ -9,3 +9,5 @@ windows.debug.x86_64 = "res://bin/libkCC_modules.windows.template_debug.x86_64.d
 windows.release.x86_64 = "res://bin/libkCC_modules.windows.template_release.x86_64.dll"
 linux.debug.x86_64 = "res://bin/libkCC_modules.linux.template_debug.x86_64.so"
 linux.release.x86_64 = "res://bin/libkCC_modules.linux.template_release.x86_64.so"
+macos.debug.x86_64 = "res://bin/libkCC_modules.macos.template_debug.x86_64.dylib"
+macos.release.x86_64 = "res://bin/libkCC_modules.macos.template_release.x86_64.dylib"
