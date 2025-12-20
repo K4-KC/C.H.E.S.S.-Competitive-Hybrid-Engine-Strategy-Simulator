@@ -7,5 +7,8 @@
 script = ExtResource("1_o5qli")
 
 [node name="Board0" type="Sprite2D" parent="."]
-position = Vector2(64, 64)
+position = Vector2(256, 256)
+scale = Vector2(4, 4)
 texture = ExtResource("2_0wfyh")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
