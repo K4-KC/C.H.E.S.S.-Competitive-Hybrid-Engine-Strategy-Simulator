@@ -17,29 +17,49 @@ void Agent::extract_features(uint8_t color) {
     std::fill(input_features.begin(), input_features.end(), 0.0f);
 
     const uint8_t* squares = board->get_squares();
-    bool mirror_board = (color == COLOR_BLACK);
+    const bool mirror_board = (color == COLOR_BLACK);
 
     // ==================== PIECE-SQUARE FEATURES (768 inputs) ====================
     // 12 planes: P, N, B, R, Q, K (white), p, n, b, r, q, k (black)
     // Each plane has 64 squares
 
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece)) continue;
+    // Use piece lists for faster iteration (avoid scanning empty squares)
+    const uint8_t* white_pieces = board->get_white_piece_list();
+    const uint8_t* black_pieces = board->get_black_piece_list();
+    const uint8_t white_count = board->get_white_piece_count();
+    const uint8_t black_count = board->get_black_piece_count();
 
-        uint8_t piece_type = GET_PIECE_TYPE(piece);
-        bool is_white = IS_WHITE(piece);
+    // Process white pieces
+    for (uint8_t i = 0; i < white_count; i++) {
+        const uint8_t sq = white_pieces[i];
+        const uint8_t piece = squares[sq];
+        const uint8_t piece_type = GET_PIECE_TYPE(piece);
 
-        // Calculate plane index (0-11)
         // White pieces: P=0, N=1, B=2, R=3, Q=4, K=5
-        // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
-        int plane = (piece_type - 1) + (is_white ? 0 : 6);
+        const int plane = piece_type - 1;
 
         // Mirror square horizontally if playing as black
-        int feature_square = mirror_board ? mirror_square_horizontal(sq) : sq;
+        const int feature_square = mirror_board ? mirror_square_horizontal(sq) : sq;
 
         // Feature index = plane * 64 + square
-        int feature_idx = plane * 64 + feature_square;
+        const int feature_idx = plane * 64 + feature_square;
+        input_features[feature_idx] = 1.0f;
+    }
+
+    // Process black pieces
+    for (uint8_t i = 0; i < black_count; i++) {
+        const uint8_t sq = black_pieces[i];
+        const uint8_t piece = squares[sq];
+        const uint8_t piece_type = GET_PIECE_TYPE(piece);
+
+        // Black pieces: p=6, n=7, b=8, r=9, q=10, k=11
+        const int plane = (piece_type - 1) + 6;
+
+        // Mirror square horizontally if playing as black
+        const int feature_square = mirror_board ? mirror_square_horizontal(sq) : sq;
+
+        // Feature index = plane * 64 + square
+        const int feature_idx = plane * 64 + feature_square;
         input_features[feature_idx] = 1.0f;
     }
 
@@ -284,6 +304,26 @@ void Agent::score_moves(MoveList &moves, uint8_t tt_best_from, uint8_t tt_best_t
 }
 
 void Agent::sort_moves(MoveList &moves) const {
+    // Counting sort - optimized for the known range of move scores
+    // Scores range from 0 to ~30000, but we can bucket them efficiently
+
+    if (moves.count <= 1) return;
+
+    // Use insertion sort for small lists (faster due to cache locality)
+    if (moves.count < 10) {
+        for (int i = 1; i < moves.count; i++) {
+            FastMove key = moves.moves[i];
+            int j = i - 1;
+            while (j >= 0 && moves.moves[j].score < key.score) {
+                moves.moves[j + 1] = moves.moves[j];
+                j--;
+            }
+            moves.moves[j + 1] = key;
+        }
+        return;
+    }
+
+    // For larger lists, use std::sort (fast enough with good compilers)
     std::sort(moves.moves, moves.moves + moves.count,
         [](const FastMove &a, const FastMove &b) {
             return a.score > b.score;
@@ -485,25 +525,27 @@ int Agent::evaluate_material() const {
     int score = 0;
     const uint8_t* squares = board->get_squares();
 
-    for (int sq = 0; sq < 64; sq++) {
-        uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece)) continue;
+    // Use piece lists for faster iteration (avoid scanning empty squares)
+    const uint8_t* white_pieces = board->get_white_piece_list();
+    const uint8_t* black_pieces = board->get_black_piece_list();
+    const uint8_t white_count = board->get_white_piece_count();
+    const uint8_t black_count = board->get_black_piece_count();
 
-        int piece_value = 0;
-        switch (GET_PIECE_TYPE(piece)) {
-            case PIECE_PAWN:   piece_value = PAWN_VALUE;   break;
-            case PIECE_KNIGHT: piece_value = KNIGHT_VALUE; break;
-            case PIECE_BISHOP: piece_value = BISHOP_VALUE; break;
-            case PIECE_ROOK:   piece_value = ROOK_VALUE;   break;
-            case PIECE_QUEEN:  piece_value = QUEEN_VALUE;  break;
-            case PIECE_KING:   piece_value = 0;            break;
-        }
+    // Precomputed piece values array (index 0 unused)
+    static const int piece_values[7] = {0, PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE, 0};
 
-        if (IS_WHITE(piece)) {
-            score += piece_value;
-        } else {
-            score -= piece_value;
-        }
+    // Sum white material
+    for (uint8_t i = 0; i < white_count; i++) {
+        const uint8_t sq = white_pieces[i];
+        const uint8_t piece_type = GET_PIECE_TYPE(squares[sq]);
+        score += piece_values[piece_type];
+    }
+
+    // Subtract black material
+    for (uint8_t i = 0; i < black_count; i++) {
+        const uint8_t sq = black_pieces[i];
+        const uint8_t piece_type = GET_PIECE_TYPE(squares[sq]);
+        score -= piece_values[piece_type];
     }
 
     return score;

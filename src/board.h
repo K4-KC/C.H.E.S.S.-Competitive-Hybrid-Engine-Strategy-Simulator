@@ -99,10 +99,47 @@ class Board : public Node2D {
 private:
     // Board state: 64 squares
     uint8_t squares[64];
-    
+
     // Cached king positions for fast lookup
     uint8_t white_king_pos;
     uint8_t black_king_pos;
+
+    // ==================== PIECE LIST OPTIMIZATION ====================
+    // Track all piece positions for fast iteration (avoid scanning empty squares)
+    uint8_t white_piece_list[16];  // Max 16 pieces per side
+    uint8_t black_piece_list[16];
+    uint8_t white_piece_count;
+    uint8_t black_piece_count;
+
+    void rebuild_piece_lists();
+    inline void add_piece_to_list(uint8_t square, uint8_t piece) {
+        if (IS_WHITE(piece)) {
+            if (white_piece_count < 16) {
+                white_piece_list[white_piece_count++] = square;
+            }
+        } else {
+            if (black_piece_count < 16) {
+                black_piece_list[black_piece_count++] = square;
+            }
+        }
+    }
+    inline void remove_piece_from_list(uint8_t square, uint8_t piece) {
+        if (IS_WHITE(piece)) {
+            for (uint8_t i = 0; i < white_piece_count; i++) {
+                if (white_piece_list[i] == square) {
+                    white_piece_list[i] = white_piece_list[--white_piece_count];
+                    break;
+                }
+            }
+        } else {
+            for (uint8_t i = 0; i < black_piece_count; i++) {
+                if (black_piece_list[i] == square) {
+                    black_piece_list[i] = black_piece_list[--black_piece_count];
+                    break;
+                }
+            }
+        }
+    }
     
     // Game state
     uint8_t turn;
@@ -191,6 +228,12 @@ public:
     uint8_t get_en_passant_target() const { return en_passant_target; }
     uint8_t get_white_king_pos() const { return white_king_pos; }
     uint8_t get_black_king_pos() const { return black_king_pos; }
+
+    // Piece list access for optimized iteration
+    const uint8_t* get_white_piece_list() const { return white_piece_list; }
+    const uint8_t* get_black_piece_list() const { return black_piece_list; }
+    uint8_t get_white_piece_count() const { return white_piece_count; }
+    uint8_t get_black_piece_count() const { return black_piece_count; }
     
     inline uint8_t get_king_pos(uint8_t color) const {
         return (color == 0) ? white_king_pos : black_king_pos;
@@ -212,13 +255,13 @@ public:
     bool is_king_in_check(uint8_t color) const;
     bool has_legal_moves() const;
     
-    void generate_pawn_moves(uint8_t pos, MoveList &moves) const;
-    void generate_knight_moves(uint8_t pos, MoveList &moves) const;
-    void generate_bishop_moves(uint8_t pos, MoveList &moves) const;
-    void generate_rook_moves(uint8_t pos, MoveList &moves) const;
-    void generate_queen_moves(uint8_t pos, MoveList &moves) const;
-    void generate_king_moves(uint8_t pos, MoveList &moves) const;
-    void generate_castling_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_pawn_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_knight_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_bishop_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_rook_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_queen_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_king_moves(uint8_t pos, MoveList &moves) const;
+    inline void generate_castling_moves(uint8_t pos, MoveList &moves) const;
     void generate_all_pseudo_legal(MoveList &moves) const;
     
     // Fast make/unmake for search (public for NeuralNet)

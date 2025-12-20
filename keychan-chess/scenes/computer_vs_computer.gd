@@ -19,7 +19,7 @@ var TRAINING_MODE = 1  # 0=none, 1=heuristic, 2=distillation
 const SAVE_MODELS_AFTER_GAME = true  # Auto-save models after game ends
 const MODEL_WHITE_PATH = "res://assets/models/white_agent.nn"
 const MODEL_BLACK_PATH = "res://assets/models/black_agent.nn"
-const LOAD_MODELS_ON_START = false  # Set to true to load existing models
+const LOAD_MODELS_ON_START = true  # Set to true to load existing models
 const LEARNING_RATE = 0.001  # Learning rate for gradient descent
 const TRAIN_EVERY_N_MOVES = 1  # Train after every N moves (1 = train after each move)
 const DISTILLATION_SEARCH_DEPTH = 3  # Depth for tree search in distillation mode

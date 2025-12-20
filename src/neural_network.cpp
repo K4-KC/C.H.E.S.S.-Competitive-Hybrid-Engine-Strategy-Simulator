@@ -6,6 +6,23 @@
 
 using namespace godot;
 
+// ==================== STATIC MEMBER DEFINITIONS ====================
+
+float NeuralNet::sigmoid_lut[NeuralNet::SIGMOID_LUT_SIZE];
+bool NeuralNet::sigmoid_lut_initialized = false;
+
+void NeuralNet::init_sigmoid_lut() {
+    if (sigmoid_lut_initialized) return;
+
+    for (int i = 0; i < SIGMOID_LUT_SIZE; i++) {
+        // Map index [0, 4095] to x in [-8, 8]
+        float x = (static_cast<float>(i) / (SIGMOID_LUT_SIZE - 1)) * 2.0f * SIGMOID_LUT_RANGE - SIGMOID_LUT_RANGE;
+        sigmoid_lut[i] = 1.0f / (1.0f + std::exp(-x));
+    }
+
+    sigmoid_lut_initialized = true;
+}
+
 // ==================== NEURAL NETWORK FORWARD PASS ====================
 
 void NeuralNet::forward_pass_linear(size_t layer_idx) {
@@ -24,32 +41,64 @@ void NeuralNet::forward_pass_linear(size_t layer_idx) {
 }
 
 void NeuralNet::forward_pass_relu(size_t layer_idx) {
-    int prev_layer_size = layer_sizes[layer_idx - 1];
-    int current_layer_size = layer_sizes[layer_idx];
-    size_t weight_idx = layer_idx - 1;
+    const int prev_layer_size = layer_sizes[layer_idx - 1];
+    const int current_layer_size = layer_sizes[layer_idx];
+    const size_t weight_idx = layer_idx - 1;
+
+    const float* prev_activations = activations[layer_idx - 1].data();
+    float* curr_z_values = z_values[layer_idx].data();
+    float* curr_activations = activations[layer_idx].data();
 
     for (int neuron = 0; neuron < current_layer_size; neuron++) {
         float sum = biases[weight_idx][neuron];
-        for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
-            sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
+        const float* neuron_weights = weights[weight_idx][neuron].data();
+
+        // Unroll by 4 for better performance
+        int prev_neuron = 0;
+        for (; prev_neuron + 3 < prev_layer_size; prev_neuron += 4) {
+            sum += prev_activations[prev_neuron] * neuron_weights[prev_neuron];
+            sum += prev_activations[prev_neuron + 1] * neuron_weights[prev_neuron + 1];
+            sum += prev_activations[prev_neuron + 2] * neuron_weights[prev_neuron + 2];
+            sum += prev_activations[prev_neuron + 3] * neuron_weights[prev_neuron + 3];
         }
-        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
-        activations[layer_idx][neuron] = relu(sum);
+        // Handle remainder
+        for (; prev_neuron < prev_layer_size; prev_neuron++) {
+            sum += prev_activations[prev_neuron] * neuron_weights[prev_neuron];
+        }
+
+        curr_z_values[neuron] = sum;
+        curr_activations[neuron] = relu(sum);
     }
 }
 
 void NeuralNet::forward_pass_sigmoid(size_t layer_idx) {
-    int prev_layer_size = layer_sizes[layer_idx - 1];
-    int current_layer_size = layer_sizes[layer_idx];
-    size_t weight_idx = layer_idx - 1;
+    const int prev_layer_size = layer_sizes[layer_idx - 1];
+    const int current_layer_size = layer_sizes[layer_idx];
+    const size_t weight_idx = layer_idx - 1;
+
+    const float* prev_activations = activations[layer_idx - 1].data();
+    float* curr_z_values = z_values[layer_idx].data();
+    float* curr_activations = activations[layer_idx].data();
 
     for (int neuron = 0; neuron < current_layer_size; neuron++) {
         float sum = biases[weight_idx][neuron];
-        for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
-            sum += activations[layer_idx - 1][prev_neuron] * weights[weight_idx][neuron][prev_neuron];
+        const float* neuron_weights = weights[weight_idx][neuron].data();
+
+        // Unroll by 4 for better performance
+        int prev_neuron = 0;
+        for (; prev_neuron + 3 < prev_layer_size; prev_neuron += 4) {
+            sum += prev_activations[prev_neuron] * neuron_weights[prev_neuron];
+            sum += prev_activations[prev_neuron + 1] * neuron_weights[prev_neuron + 1];
+            sum += prev_activations[prev_neuron + 2] * neuron_weights[prev_neuron + 2];
+            sum += prev_activations[prev_neuron + 3] * neuron_weights[prev_neuron + 3];
         }
-        z_values[layer_idx][neuron] = sum;  // Store pre-activation value
-        activations[layer_idx][neuron] = sigmoid(sum);
+        // Handle remainder
+        for (; prev_neuron < prev_layer_size; prev_neuron++) {
+            sum += prev_activations[prev_neuron] * neuron_weights[prev_neuron];
+        }
+
+        curr_z_values[neuron] = sum;
+        curr_activations[neuron] = sigmoid(sum);
     }
 }
 
@@ -119,14 +168,26 @@ float NeuralNet::forward_pass(const std::vector<float> &input_features) {
 
     // Output layer (always uses sigmoid to keep output between 0 and 1)
     if (num_layers > 1) {
-        size_t output_layer = num_layers - 1;
-        int prev_layer_size = layer_sizes[output_layer - 1];
-        size_t weight_idx = output_layer - 1;
+        const size_t output_layer = num_layers - 1;
+        const int prev_layer_size = layer_sizes[output_layer - 1];
+        const size_t weight_idx = output_layer - 1;
 
         // Compute output (single neuron with sigmoid)
         float sum = biases[weight_idx][0];
-        for (int prev_neuron = 0; prev_neuron < prev_layer_size; prev_neuron++) {
-            sum += activations[output_layer - 1][prev_neuron] * weights[weight_idx][0][prev_neuron];
+        const float* prev_activations = activations[output_layer - 1].data();
+        const float* output_weights = weights[weight_idx][0].data();
+
+        // Unroll by 4 for better performance
+        int prev_neuron = 0;
+        for (; prev_neuron + 3 < prev_layer_size; prev_neuron += 4) {
+            sum += prev_activations[prev_neuron] * output_weights[prev_neuron];
+            sum += prev_activations[prev_neuron + 1] * output_weights[prev_neuron + 1];
+            sum += prev_activations[prev_neuron + 2] * output_weights[prev_neuron + 2];
+            sum += prev_activations[prev_neuron + 3] * output_weights[prev_neuron + 3];
+        }
+        // Handle remainder
+        for (; prev_neuron < prev_layer_size; prev_neuron++) {
+            sum += prev_activations[prev_neuron] * output_weights[prev_neuron];
         }
 
         // Apply sigmoid to keep output between 0 and 1
@@ -634,6 +695,7 @@ bool NeuralNet::load_network(const String &filename) {
 
 NeuralNet::NeuralNet() {
     network_initialized = false;
+    init_sigmoid_lut();
 }
 
 NeuralNet::~NeuralNet() {

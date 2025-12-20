@@ -203,7 +203,21 @@ void Board::clear_board() {
     move_history_notation.clear();
     white_king_pos = 255;
     black_king_pos = 255;
+    white_piece_count = 0;
+    black_piece_count = 0;
     current_hash = 0;
+}
+
+void Board::rebuild_piece_lists() {
+    white_piece_count = 0;
+    black_piece_count = 0;
+
+    for (uint8_t sq = 0; sq < 64; sq++) {
+        uint8_t piece = squares[sq];
+        if (!IS_EMPTY(piece)) {
+            add_piece_to_list(sq, piece);
+        }
+    }
 }
 
 void Board::update_king_cache() {
@@ -254,7 +268,8 @@ void Board::initialize_starting_position() {
     promotion_pending = false;
     white_king_pos = 4;
     black_king_pos = 60;
-    
+
+    rebuild_piece_lists();
     current_hash = calculate_hash();
 }
 
@@ -337,6 +352,7 @@ bool Board::parse_fen(const String &fen) {
     }
     
     update_king_cache();
+    rebuild_piece_lists();
     current_hash = calculate_hash();
     
     return true;
@@ -505,7 +521,7 @@ bool Board::has_legal_moves() const {
 
 // ==================== MOVE GENERATION ====================
 
-void Board::generate_pawn_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_pawn_moves(uint8_t pos, MoveList &moves) const {
     uint8_t piece = squares[pos];
     uint8_t color = GET_COLOR(piece);
     int direction = (color == COLOR_WHITE) ? 8 : -8;
@@ -562,7 +578,7 @@ void Board::generate_pawn_moves(uint8_t pos, MoveList &moves) const {
     }
 }
 
-void Board::generate_knight_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_knight_moves(uint8_t pos, MoveList &moves) const {
     uint8_t color = GET_COLOR(squares[pos]);
     
     for (int i = 0; i < knight_attack_count[pos]; i++) {
@@ -577,7 +593,7 @@ void Board::generate_knight_moves(uint8_t pos, MoveList &moves) const {
     }
 }
 
-void Board::generate_bishop_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_bishop_moves(uint8_t pos, MoveList &moves) const {
     uint8_t color = GET_COLOR(squares[pos]);
     
     for (int dir = 4; dir < 8; dir++) {
@@ -601,7 +617,7 @@ void Board::generate_bishop_moves(uint8_t pos, MoveList &moves) const {
     }
 }
 
-void Board::generate_rook_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_rook_moves(uint8_t pos, MoveList &moves) const {
     uint8_t color = GET_COLOR(squares[pos]);
     
     for (int dir = 0; dir < 4; dir++) {
@@ -625,12 +641,12 @@ void Board::generate_rook_moves(uint8_t pos, MoveList &moves) const {
     }
 }
 
-void Board::generate_queen_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_queen_moves(uint8_t pos, MoveList &moves) const {
     generate_rook_moves(pos, moves);
     generate_bishop_moves(pos, moves);
 }
 
-void Board::generate_king_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_king_moves(uint8_t pos, MoveList &moves) const {
     uint8_t color = GET_COLOR(squares[pos]);
     
     for (int i = 0; i < king_attack_count[pos]; i++) {
@@ -645,7 +661,7 @@ void Board::generate_king_moves(uint8_t pos, MoveList &moves) const {
     }
 }
 
-void Board::generate_castling_moves(uint8_t pos, MoveList &moves) const {
+inline void Board::generate_castling_moves(uint8_t pos, MoveList &moves) const {
     uint8_t color_val = GET_COLOR(squares[pos]);
     uint8_t color = (color_val == COLOR_WHITE) ? 0 : 1;
     
@@ -679,20 +695,31 @@ void Board::generate_castling_moves(uint8_t pos, MoveList &moves) const {
 
 void Board::generate_all_pseudo_legal(MoveList &moves) const {
     moves.clear();
-    uint8_t target_color = (turn == 0) ? COLOR_WHITE : COLOR_BLACK;
-    
-    for (int sq = 0; sq < 64; sq++) {
+
+    // Use piece lists for faster iteration (avoid scanning empty squares)
+    const uint8_t* piece_list;
+    uint8_t piece_count;
+
+    if (turn == 0) {
+        piece_list = white_piece_list;
+        piece_count = white_piece_count;
+    } else {
+        piece_list = black_piece_list;
+        piece_count = black_piece_count;
+    }
+
+    for (uint8_t i = 0; i < piece_count; i++) {
+        uint8_t sq = piece_list[i];
         uint8_t piece = squares[sq];
-        if (IS_EMPTY(piece) || GET_COLOR(piece) != target_color) continue;
-        
+
         switch (GET_PIECE_TYPE(piece)) {
             case PIECE_PAWN:   generate_pawn_moves(sq, moves); break;
             case PIECE_KNIGHT: generate_knight_moves(sq, moves); break;
             case PIECE_BISHOP: generate_bishop_moves(sq, moves); break;
             case PIECE_ROOK:   generate_rook_moves(sq, moves); break;
             case PIECE_QUEEN:  generate_queen_moves(sq, moves); break;
-            case PIECE_KING:   
-                generate_king_moves(sq, moves); 
+            case PIECE_KING:
+                generate_king_moves(sq, moves);
                 generate_castling_moves(sq, moves);
                 break;
         }

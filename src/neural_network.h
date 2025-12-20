@@ -62,9 +62,28 @@ protected:
     void forward_pass_sigmoid(size_t layer_idx);
     void forward_pass_tanh(size_t layer_idx);
 
+    // ==================== FAST SIGMOID LOOKUP TABLE ====================
+    static constexpr int SIGMOID_LUT_SIZE = 4096;
+    static constexpr float SIGMOID_LUT_RANGE = 8.0f;  // Cover [-8, 8]
+    static float sigmoid_lut[SIGMOID_LUT_SIZE];
+    static bool sigmoid_lut_initialized;
+    static void init_sigmoid_lut();
+
     // Activation functions (inline for performance)
     inline float relu(float x) const { return (x > 0.0f) ? x : 0.0f; }
-    inline float sigmoid(float x) const { return 1.0f / (1.0f + std::exp(-x)); }
+
+    // Fast sigmoid using lookup table
+    inline float sigmoid(float x) const {
+        // Clamp to range
+        if (x <= -SIGMOID_LUT_RANGE) return 0.0f;
+        if (x >= SIGMOID_LUT_RANGE) return 1.0f;
+
+        // Map x from [-8, 8] to [0, 4095]
+        float normalized = (x + SIGMOID_LUT_RANGE) / (2.0f * SIGMOID_LUT_RANGE);
+        int index = static_cast<int>(normalized * (SIGMOID_LUT_SIZE - 1));
+        return sigmoid_lut[index];
+    }
+
     inline float tanh_activation(float x) const { return std::tanh(x); }
     inline float linear(float x) const { return x; }
 
