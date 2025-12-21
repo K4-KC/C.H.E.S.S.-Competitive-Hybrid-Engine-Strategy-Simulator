@@ -12,11 +12,15 @@ env = SConscript("godot-cpp/SConstruct")
 # - CPPDEFINES are for pre-processor defines
 # - LINKFLAGS are for linking flags
 
+# Configure build directory to keep object files separate from source
+build_dir = "build_cache/{}".format(env["platform"])
+VariantDir(build_dir, "keychan-chess/modules", duplicate=0)
+
 # tweak this if you want to use different folders, or more folders, to store your source code in.
 env.Append(CPPPATH=["keychan-chess/modules/"])
 
-# Automatically finds all .cpp files in src/ directory
-sources = Glob("keychan-chess/modules/*.cpp")
+# Automatically finds all .cpp files in src/ directory, but build in separate directory
+sources = Glob("{}/*.cpp".format(build_dir))
 
 # Changed library name from "NeuralNet" to "chess_ai" to reflect combined module
 library = env.SharedLibrary(

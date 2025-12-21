@@ -1,7 +1,8 @@
 extends Node2D
 
-const TILE_SIZE = 16
-const BOARD_OFFSET = Vector2(8, 8)
+const TILE_SIZE = 64
+const BOARD_OFFSET = Vector2(32, 32)
+const SPRITE_SCALE = 4.0
 
 # Piece type constants (must match board.h)
 const PIECE_NONE = 0
@@ -34,11 +35,19 @@ var tex_capture = preload("res://assets/sprites/highlights/capture.png")
 var tex_moving = preload("res://assets/sprites/highlights/moving.png")
 var tex_moved = preload("res://assets/sprites/highlights/moved.png")
 
+func is_christmas_season() -> bool:
+	var date = Time.get_date_dict_from_system()
+	var month = date["month"]
+	var day = date["day"]
+	return (month == 12 and day >= 1) or (month == 1 and day <= 6)
+
 var textures = {
-	0: { "p": preload("res://assets/sprites/pieces/p0.png"), "r": preload("res://assets/sprites/pieces/r0.png"), "n": preload("res://assets/sprites/pieces/n0.png"), 
-		 "b": preload("res://assets/sprites/pieces/b0.png"), "q": preload("res://assets/sprites/pieces/q0.png"), "k": preload("res://assets/sprites/pieces/k0.png") },
-	1: { "p": preload("res://assets/sprites/pieces/p1.png"), "r": preload("res://assets/sprites/pieces/r1.png"), "n": preload("res://assets/sprites/pieces/n1.png"), 
-		 "b": preload("res://assets/sprites/pieces/b1.png"), "q": preload("res://assets/sprites/pieces/q1.png"), "k": preload("res://assets/sprites/pieces/k1.png") }
+	0: { "p": preload("res://assets/sprites/pieces/p0.png"), "r": preload("res://assets/sprites/pieces/r0.png"), "n": preload("res://assets/sprites/pieces/n0.png"),
+		 "b": preload("res://assets/sprites/pieces/b0.png"), "q": preload("res://assets/sprites/pieces/q0.png"),
+		 "k": preload("res://assets/sprites/pieces/k0_santa.png") if is_christmas_season() else preload("res://assets/sprites/pieces/k0.png") },
+	1: { "p": preload("res://assets/sprites/pieces/p1.png"), "r": preload("res://assets/sprites/pieces/r1.png"), "n": preload("res://assets/sprites/pieces/n1.png"),
+		 "b": preload("res://assets/sprites/pieces/b1.png"), "q": preload("res://assets/sprites/pieces/q1.png"),
+		 "k": preload("res://assets/sprites/pieces/k1_santa.png") if is_christmas_season() else preload("res://assets/sprites/pieces/k1.png") }
 }
 
 # UI nodes and state
@@ -223,6 +232,7 @@ func deselect_piece():
 func spawn_highlight(texture, grid_pos):
 	var s = Sprite2D.new()
 	s.texture = texture
+	s.scale = Vector2(SPRITE_SCALE, SPRITE_SCALE)
 	s.position = grid_to_pixel(Vector2(grid_pos.x, grid_pos.y))
 	$Highlights.add_child(s)
 	highlight_sprites.append(s)
@@ -236,15 +246,17 @@ func update_last_move_visuals(start: Vector2i, end: Vector2i):
 	for s in last_move_sprites:
 		s.queue_free()
 	last_move_sprites.clear()
-	
+
 	var s1 = Sprite2D.new()
 	s1.texture = tex_moved
+	s1.scale = Vector2(SPRITE_SCALE, SPRITE_SCALE)
 	s1.position = grid_to_pixel(Vector2(start.x, start.y))
 	$Highlights.add_child(s1)
 	last_move_sprites.append(s1)
-	
+
 	var s2 = Sprite2D.new()
 	s2.texture = tex_moved
+	s2.scale = Vector2(SPRITE_SCALE, SPRITE_SCALE)
 	s2.position = grid_to_pixel(Vector2(end.x, end.y))
 	$Highlights.add_child(s2)
 	last_move_sprites.append(s2)
@@ -268,6 +280,7 @@ func refresh_visuals():
 				else:
 					var s = Sprite2D.new()
 					s.texture = textures[color][type]
+					s.scale = Vector2(SPRITE_SCALE, SPRITE_SCALE)
 					s.position = grid_to_pixel(Vector2(x, y))
 					$Pieces.add_child(s)
 					sprites[pos] = s

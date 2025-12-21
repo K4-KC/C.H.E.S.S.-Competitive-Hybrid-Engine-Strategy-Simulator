@@ -4,6 +4,7 @@
 
 /godot-cpp
 .sconsign.dblite
+/build_cache/
 
 /chess_godot/bin
 
