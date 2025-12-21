@@ -214,7 +214,7 @@ public:
     Board();
     ~Board();
 
-    void _ready();
+    void _ready() override;
     
     // ==================== PUBLIC STATE ACCESS ====================
     uint8_t get_turn() const;

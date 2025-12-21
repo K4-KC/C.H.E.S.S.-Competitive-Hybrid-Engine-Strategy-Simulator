@@ -21,6 +21,15 @@ window/size/viewport_width=512
 window/size/viewport_height=512
 window/size/resizable=false
 
+[file_customization]
+
+folder_colors={
+"res://assets/": "green",
+"res://bin/": "red",
+"res://modules/": "gray",
+"res://scenes/": "purple"
+}
+
 [gui]
 
 fonts/dynamic_fonts/use_oversampling=false
@@ -28,3 +37,4 @@ fonts/dynamic_fonts/use_oversampling=false
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0
+textures/vram_compression/import_etc2_astc=true

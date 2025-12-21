@@ -126,7 +126,7 @@ float NeuralNet::forward_pass(const std::vector<float> &input_features) {
     // Validate input size
     if (input_features.size() != static_cast<size_t>(layer_sizes[0])) {
         UtilityFunctions::print("Error: Input size mismatch. Expected ", layer_sizes[0],
-                                ", got ", input_features.size());
+                                ", got ", static_cast<int64_t>(input_features.size()));
         return 0.5f;
     }
 
@@ -298,7 +298,7 @@ void NeuralNet::initialize_neural_network(const Array &layer_sizes_array, const 
             // Initialize weights with small random values
             for (int input = 0; input < input_size; input++) {
                 // Simple random initialization (in practice, you'd load these from a file)
-                weights[layer][neuron][input] = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * xavier_factor;
+                weights[layer][neuron][input] = (static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f) * 2.0f * xavier_factor;
             }
 
             // Initialize bias to zero
@@ -367,7 +367,7 @@ void NeuralNet::set_layer_weights(int layer_index, const Array &weights_array, c
 
     if (layer_index < 0 || layer_index >= static_cast<int>(weights.size())) {
         UtilityFunctions::print("Error: Invalid layer index ", layer_index,
-                                ". Valid range: 0 to ", weights.size() - 1);
+                                ". Valid range: 0 to ", static_cast<int64_t>(weights.size() - 1));
         return;
     }
 
@@ -441,7 +441,7 @@ void NeuralNet::set_activation_function(int layer_index, const String &activatio
     // Validate layer index (can only set hidden layers, not output)
     if (layer_index < 0 || layer_index >= static_cast<int>(activation_functions.size())) {
         UtilityFunctions::print("Error: Invalid layer index ", layer_index,
-                                ". Valid range: 0 to ", activation_functions.size() - 1,
+                                ". Valid range: 0 to ", static_cast<int64_t>(activation_functions.size() - 1),
                                 " (or -1 for all hidden layers)");
         UtilityFunctions::print("Note: Output layer activation cannot be changed (always sigmoid)");
         return;

@@ -94,7 +94,7 @@ public:
     NeuralNet();
     ~NeuralNet();
 
-    void _ready();
+    void _ready() override;
 
     // ==================== NEURAL NETWORK INFERENCE ====================
 
