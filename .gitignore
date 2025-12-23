@@ -20,3 +20,5 @@ src/*.obj
 *.os
 *.zip
 /.claude
+
+keychan-chess/bin/~libkCC_modules.windows.template_debug.x86_64.dll
