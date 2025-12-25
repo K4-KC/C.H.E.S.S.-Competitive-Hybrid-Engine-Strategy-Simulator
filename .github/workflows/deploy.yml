@@ -83,12 +83,18 @@ jobs:
       # ---------------------------------------------------------
       # STEP 2: Export
       # ---------------------------------------------------------
+      # 1. Clean the export folder to ensure no old files interfere
+      - name: Prepare Export Directory
+        run: |
+          rm -rf C.H.E.S.S/exports
+          mkdir -p C.H.E.S.S/exports
+
       - name: Godot Export
         uses: firebelley/godot-export@v5.2.1
         with:
           godot_executable_download_url: "https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip"
           godot_export_templates_download_url: "https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz"
-          relative_project_path: "./C.H.E.S.S" 
+          relative_project_path: "./C.H.E.S.S"
           archive_output: true
           export_preset: ${{ matrix.platform }}
           use_preset_export_path: true
@@ -102,31 +108,37 @@ jobs:
         id: rename_zip
         shell: bash
         run: |
-          # 1. Find the zip file this specific runner just created
-          OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
+          # 1. Find the ONLY zip file in the directory (guaranteed by the clean step above)
+          OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f)
           
+          # Sanity check: Ensure we found exactly one file
+          FILE_COUNT=$(echo "$OLD_ZIP" | wc -l)
           if [ -z "$OLD_ZIP" ]; then
-            echo "❌ No zip file found!"
+            echo "❌ No zip file found! Did the export fail?"
+            exit 1
+          fi
+          if [ "$FILE_COUNT" -gt 1 ]; then
+            echo "❌ Found multiple zip files! Cleaning failed or export created extras:"
+            echo "$OLD_ZIP"
             exit 1
           fi
 
           # 2. Determine correct suffix for this runner
           PLATFORM="${{ matrix.platform }}"
           if [ "$PLATFORM" == "windows" ]; then
-             SHORT_PLAT="win"
+              SHORT_PLAT="win"
           elif [ "$PLATFORM" == "macos" ]; then
-             SHORT_PLAT="mac"
+              SHORT_PLAT="mac"
           else
-             SHORT_PLAT="linux"
+              SHORT_PLAT="linux"
           fi
 
           # 3. Create the unique name
-          # E.g. "C.H.E.S.S... (win).zip" or "C.H.E.S.S... (linux).zip"
           NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
           NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
 
           mv "$OLD_ZIP" "$NEW_PATH"
-          echo "Renamed file to: $NEW_PATH"
+          echo "✅ Renamed '$OLD_ZIP' to: '$NEW_PATH'"
           
           # Save path for subsequent steps
           echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV
