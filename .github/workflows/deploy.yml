@@ -132,15 +132,13 @@ jobs:
           fi
 
           # 4. Create the unique name and rename
-          NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
+          NEW_NAME="($SHORT_PLAT) ${{ env.GAME_TITLE }}.zip"
           NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
 
           mv "$OLD_PATH" "$NEW_PATH"
           echo "✅ Renamed '$OLD_PATH' to: '$NEW_PATH'"
           
           # 5. (Optional) Cleanup other platform files to prevent confusion in artifacts
-          # This removes linux.zip/macos.zip if we are currently on the windows runner
-          find C.H.E.S.S/exports -type f -name "*.zip" ! -name "$NEW_NAME" -delete
 
           # Save path for subsequent steps
           echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV

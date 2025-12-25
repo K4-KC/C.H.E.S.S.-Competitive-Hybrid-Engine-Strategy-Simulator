@@ -1,8 +1,4 @@
-## v0.1.3-pre-alpha
-
-- Test 6
-
-## v0.1.0-alpha
+## v0.1.0-pre-alpha
 
 - Initial release of the project.
 - Heuristic model with good old tree search.
