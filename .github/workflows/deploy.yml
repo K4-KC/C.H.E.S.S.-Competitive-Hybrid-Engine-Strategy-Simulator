@@ -9,6 +9,7 @@ env:
   GODOT_VERSION: "4.5"
   ITCH_USER: "K4-KC"
   ITCH_GAME: "chess"
+  GAME_TITLE: "C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator"
 
 permissions:
   contents: write
@@ -34,66 +35,51 @@ jobs:
         id: parse_data
         shell: bash
         run: |
-          # 🔍 DEBUGGING START: Show me the file structure
-          echo "Listing all files in the repository:"
-          ls -R
-          echo "--------------------------------------"
-          # 🔍 DEBUGGING END
-
           FILE="C.H.E.S.S/CHANGELOGS.md"
           
-          # 1. Grab the first header line (e.g., "## v0.1.5")
+          # 1. Grab the version
           RAW_HEADER=$(grep -m 1 "^## " "$FILE")
-          # Remove '## ' and whitespace
           TAG_NAME=$(echo "$RAW_HEADER" | sed 's/## //g' | xargs)
-          # Remove 'v' for Itch.io versioning
           CLEAN_VERSION=${TAG_NAME#v}
           
           echo "Found Version: $TAG_NAME"
           
-          # 2. Extract the Body (Text between first ## and the next ##)
+          # 2. Extract Body
           BODY=$(awk '/^## / { if (p) { exit }; p=1; next } p' "$FILE")
           
-          # 3. Check for Pre-release (Look for a hyphen, e.g., "v0.1.5-beta")
+          # 3. Check Pre-release
           if [[ "$TAG_NAME" == *"-"* ]]; then
-            echo "Detected Pre-release: YES"
             IS_PRE="true"
           else
-            echo "Detected Pre-release: NO"
             IS_PRE="false"
           fi
 
-          # 4. Export to GitHub Outputs
           echo "VERSION=$CLEAN_VERSION" >> $GITHUB_OUTPUT
           echo "TAG=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "PRERELEASE=$IS_PRE" >> $GITHUB_OUTPUT
           
-          # Multiline string export for the Body
           echo "BODY<<EOF" >> $GITHUB_OUTPUT
           echo "$BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       # ---------------------------------------------------------
-      # STEP 1: Manual Import with "Crash Protection"
+      # STEP 1: Manual Import
       # ---------------------------------------------------------
       - name: Setup and Import Godot (Ignore Crash)
         shell: bash
         run: |
-          # 1. Download Godot 4.5
           wget -q https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip
           unzip -q Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip
           mv Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64 godot
           chmod +x godot
 
-          # 2. Run Import with Timeout (and ignore exit code 11)
           echo "Starting Import..."
           timeout 1m ./godot --headless --path ./C.H.E.S.S --editor --quit || true
           
-          # 3. Verify Success
           if [ -d "./C.H.E.S.S/.godot" ]; then
-              echo "✅ .godot folder exists. Import was successful."
+              echo "✅ .godot folder exists."
           else
-              echo "❌ .godot folder missing. Import failed."
+              echo "❌ .godot folder missing."
               exit 1
           fi
 
@@ -113,22 +99,41 @@ jobs:
           additional_args: "--headless"
 
       # ---------------------------------------------------------
-      # STEP 3: Find the Zip File (Handles long names + spaces)
+      # STEP 3: Rename Artifact (NEW STEP)
       # ---------------------------------------------------------
-      - name: Find Exported Zip
-        id: find_zip
+      - name: Rename Exported File
+        id: rename_zip
         shell: bash
         run: |
-          # Find the only .zip file in the exports folder
-          ZIP_PATH=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
+          # 1. Find the exported zip (whatever Godot named it)
+          OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
           
-          if [ -z "$ZIP_PATH" ]; then
-            echo "❌ No zip file found in C.H.E.S.S/exports!"
+          if [ -z "$OLD_ZIP" ]; then
+            echo "❌ No zip file found!"
             exit 1
           fi
 
-          echo "Found package: $ZIP_PATH"
-          echo "GAME_PACKAGE_PATH=$ZIP_PATH" >> $GITHUB_ENV
+          # 2. Determine short platform name (win, mac, linux)
+          PLATFORM="${{ matrix.platform }}"
+          if [ "$PLATFORM" == "windows" ]; then
+             SHORT_PLAT="win"
+          elif [ "$PLATFORM" == "macos" ]; then
+             SHORT_PLAT="mac"
+          else
+             SHORT_PLAT="linux"
+          fi
+
+          # 3. Construct the new Fancy Name
+          # "C.H.E.S.S. - Competitive... (win).zip"
+          NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
+          NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
+
+          # 4. Rename
+          mv "$OLD_ZIP" "$NEW_PATH"
+          echo "Renamed $OLD_ZIP to $NEW_PATH"
+
+          # 5. Save for next steps
+          echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
       # STEP 4: Publish to Itch.io
@@ -144,20 +149,22 @@ jobs:
           VERSION: ${{ steps.parse_data.outputs.VERSION }}
       
       # ---------------------------------------------------------
-      # STEP 5: Create GitHub Release
+      # STEP 5: GitHub Release
       # ---------------------------------------------------------
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         if: matrix.platform == 'windows' 
         with:
           tag_name: ${{ steps.parse_data.outputs.TAG }}
-          name: C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator ${{ steps.parse_data.outputs.TAG }}
+          name: ${{ env.GAME_TITLE }} ${{ steps.parse_data.outputs.TAG }}
           body: ${{ steps.parse_data.outputs.BODY }}
           prerelease: ${{ steps.parse_data.outputs.PRERELEASE }}
+          # We upload specific files now, but using the wildcard is safe
+          # because we just renamed the only zip file in that folder.
           files: C.H.E.S.S/exports/*.zip
 
       # ---------------------------------------------------------
-      # STEP 6: Notify Discord (Run once on Windows)
+      # STEP 6: Notify Discord
       # ---------------------------------------------------------
       - name: Notify Discord of Release
         if: matrix.platform == 'windows'
@@ -165,16 +172,12 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           VERSION: ${{ steps.parse_data.outputs.TAG }}
-          # Pass body as env var to avoid script injection issues
           CHANGELOG: ${{ steps.parse_data.outputs.BODY }}
           GITHUB_URL: "https://github.com/${{ github.repository }}/releases/tag/${{ steps.parse_data.outputs.TAG }}"
           ITCH_URL: "https://${{ env.ITCH_USER }}.itch.io/${{ env.ITCH_GAME }}"
         run: |
-          # 1. Escape newlines and quotes for valid JSON
-          # We use sed to replace actual newlines with literal '\n' characters
           ESCAPED_LOGS=$(echo "$CHANGELOG" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
           
-          # 2. Build the JSON Payload
           PAYLOAD=$(cat <<EOF
           {
             "content": "🚀 **New Release Published!**",
@@ -183,7 +186,7 @@ jobs:
                 "title": "$VERSION",
                 "color": 5763719,
                 "url": "$ITCH_URL",
-                "description": "A new version of **C.H.E.S.S** has been deployed to Itch.io and GitHub.",
+                "description": "A new version of **C.H.E.S.S** is available!",
                 "thumbnail": {
                   "url": "https://img.itch.zone/aW1nLzEwODQ3MzYucG5n/original/xW%2B%2Bq.png" 
                 },
@@ -207,6 +210,4 @@ jobs:
           }
           EOF
           )
-          
-          # 3. Send to Discord
           curl -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"
