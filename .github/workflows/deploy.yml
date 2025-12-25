@@ -120,7 +120,6 @@ jobs:
         shell: bash
         run: |
           # Find the only .zip file in the exports folder
-          # We use 'find' to handle spaces in filenames correctly
           ZIP_PATH=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
           
           if [ -z "$ZIP_PATH" ]; then
@@ -129,7 +128,6 @@ jobs:
           fi
 
           echo "Found package: $ZIP_PATH"
-          # Save the path to an environment variable for the next step
           echo "GAME_PACKAGE_PATH=$ZIP_PATH" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
@@ -142,14 +140,12 @@ jobs:
           CHANNEL: ${{ matrix.platform }}
           ITCH_GAME: ${{ env.ITCH_GAME }}
           ITCH_USER: ${{ env.ITCH_USER }}
-          # Use the variable we found in the previous step
           PACKAGE: ${{ env.GAME_PACKAGE_PATH }}
           VERSION: ${{ steps.parse_data.outputs.VERSION }}
       
       # ---------------------------------------------------------
       # STEP 5: Create GitHub Release
       # ---------------------------------------------------------
-
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         if: matrix.platform == 'windows' 
@@ -159,3 +155,58 @@ jobs:
           body: ${{ steps.parse_data.outputs.BODY }}
           prerelease: ${{ steps.parse_data.outputs.PRERELEASE }}
           files: C.H.E.S.S/exports/*.zip
+
+      # ---------------------------------------------------------
+      # STEP 6: Notify Discord (Run once on Windows)
+      # ---------------------------------------------------------
+      - name: Notify Discord of Release
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          VERSION: ${{ steps.parse_data.outputs.TAG }}
+          # Pass body as env var to avoid script injection issues
+          CHANGELOG: ${{ steps.parse_data.outputs.BODY }}
+          GITHUB_URL: "https://github.com/${{ github.repository }}/releases/tag/${{ steps.parse_data.outputs.TAG }}"
+          ITCH_URL: "https://${{ env.ITCH_USER }}.itch.io/${{ env.ITCH_GAME }}"
+        run: |
+          # 1. Escape newlines and quotes for valid JSON
+          # We use sed to replace actual newlines with literal '\n' characters
+          ESCAPED_LOGS=$(echo "$CHANGELOG" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+          
+          # 2. Build the JSON Payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "content": "🚀 **New Release Published!**",
+            "embeds": [
+              {
+                "title": "$VERSION",
+                "color": 5763719,
+                "url": "$ITCH_URL",
+                "description": "A new version of **C.H.E.S.S** has been deployed to Itch.io and GitHub.",
+                "thumbnail": {
+                  "url": "https://img.itch.zone/aW1nLzEwODQ3MzYucG5n/original/xW%2B%2Bq.png" 
+                },
+                "fields": [
+                  {
+                    "name": "📝 Release Notes",
+                    "value": "$ESCAPED_LOGS",
+                    "inline": false
+                  },
+                  {
+                    "name": "🔗 Links",
+                    "value": "[Download on Itch.io]($ITCH_URL) • [View on GitHub]($GITHUB_URL)",
+                    "inline": false
+                  }
+                ],
+                "footer": {
+                  "text": "Competitive Hybrid Engine Strategy Simulator • Automated Deploy"
+                }
+              }
+            ]
+          }
+          EOF
+          )
+          
+          # 3. Send to Discord
+          curl -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"

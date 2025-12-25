@@ -1,6 +1,3 @@
-## v0.1.2-pre-alpha
-- Testing 6
-
 ## v0.1.0-alpha
 
 - Initial release of the project.
