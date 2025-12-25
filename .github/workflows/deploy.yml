@@ -3,7 +3,6 @@ name: "Build and Release"
 on:
   push:
     paths:
-      # Updated to trigger on the .md file
       - 'C.H.E.S.S/CHANGELOGS.md'
 
 env:
