@@ -37,17 +37,14 @@ jobs:
         run: |
           FILE="C.H.E.S.S/CHANGELOGS.md"
           
-          # 1. Grab the version
           RAW_HEADER=$(grep -m 1 "^## " "$FILE")
           TAG_NAME=$(echo "$RAW_HEADER" | sed 's/## //g' | xargs)
           CLEAN_VERSION=${TAG_NAME#v}
           
           echo "Found Version: $TAG_NAME"
           
-          # 2. Extract Body
           BODY=$(awk '/^## / { if (p) { exit }; p=1; next } p' "$FILE")
           
-          # 3. Check Pre-release
           if [[ "$TAG_NAME" == *"-"* ]]; then
             IS_PRE="true"
           else
@@ -99,13 +96,12 @@ jobs:
           additional_args: "--headless"
 
       # ---------------------------------------------------------
-      # STEP 3: Rename Artifact (NEW STEP)
+      # STEP 3: Rename Artifact
       # ---------------------------------------------------------
       - name: Rename Exported File
         id: rename_zip
         shell: bash
         run: |
-          # 1. Find the exported zip (whatever Godot named it)
           OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
           
           if [ -z "$OLD_ZIP" ]; then
@@ -113,7 +109,6 @@ jobs:
             exit 1
           fi
 
-          # 2. Determine short platform name (win, mac, linux)
           PLATFORM="${{ matrix.platform }}"
           if [ "$PLATFORM" == "windows" ]; then
              SHORT_PLAT="win"
@@ -123,16 +118,10 @@ jobs:
              SHORT_PLAT="linux"
           fi
 
-          # 3. Construct the new Fancy Name
-          # "C.H.E.S.S. - Competitive... (win).zip"
           NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
           NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
 
-          # 4. Rename
           mv "$OLD_ZIP" "$NEW_PATH"
-          echo "Renamed $OLD_ZIP to $NEW_PATH"
-
-          # 5. Save for next steps
           echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
@@ -153,14 +142,11 @@ jobs:
       # ---------------------------------------------------------
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
-        if: matrix.platform == 'windows' 
         with:
           tag_name: ${{ steps.parse_data.outputs.TAG }}
           name: ${{ env.GAME_TITLE }} ${{ steps.parse_data.outputs.TAG }}
           body: ${{ steps.parse_data.outputs.BODY }}
           prerelease: ${{ steps.parse_data.outputs.PRERELEASE }}
-          # We upload specific files now, but using the wildcard is safe
-          # because we just renamed the only zip file in that folder.
           files: C.H.E.S.S/exports/*.zip
 
       # ---------------------------------------------------------
