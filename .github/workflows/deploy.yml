@@ -3,7 +3,8 @@ name: "Build and Release"
 on:
   push:
     paths:
-      - 'C.H.E.S.S/VERSION'
+      # Updated to trigger on the .md file
+      - 'C.H.E.S.S/CHANGELOGS.md'
 
 env:
   GODOT_VERSION: "4.5"
@@ -26,14 +27,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read Version
-        id: get_version
-        run: echo "VERSION=$(cat C.H.E.S.S/VERSION)" >> $GITHUB_OUTPUT 
+      # ---------------------------------------------------------
+      # STEP 0: Smart Changelog Parser
+      # ---------------------------------------------------------
+      - name: Parse Changelog
+        id: parse_data
+        shell: bash
+        run: |
+          # Updated filename here
+          FILE="C.H.E.S.S/CHANGELOGS.md"
+          
+          # 1. Grab the first header line (e.g., "## v0.1.5")
+          RAW_HEADER=$(grep -m 1 "^## " "$FILE")
+          # Remove '## ' and whitespace
+          TAG_NAME=$(echo "$RAW_HEADER" | sed 's/## //g' | xargs)
+          # Remove 'v' for Itch.io versioning
+          CLEAN_VERSION=${TAG_NAME#v}
+          
+          echo "Found Version: $TAG_NAME"
+          
+          # 2. Extract the Body (Text between first ## and the next ##)
+          BODY=$(awk '/^## / { if (p) { exit }; p=1; next } p' "$FILE")
+          
+          # 3. Check for Pre-release (Look for a hyphen, e.g., "v0.1.5-beta")
+          if [[ "$TAG_NAME" == *"-"* ]]; then
+            echo "Detected Pre-release: YES"
+            IS_PRE="true"
+          else
+            echo "Detected Pre-release: NO"
+            IS_PRE="false"
+          fi
+
+          # 4. Export to GitHub Outputs
+          echo "VERSION=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+          echo "TAG=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "PRERELEASE=$IS_PRE" >> $GITHUB_OUTPUT
+          
+          # Multiline string export for the Body
+          echo "BODY<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       # ---------------------------------------------------------
       # STEP 1: Manual Import with "Crash Protection"
-      # This runs the import, allows it to timeout (if hung), 
-      # and ignores the Signal 11 crash on exit.
       # ---------------------------------------------------------
       - name: Setup and Import Godot (Ignore Crash)
         shell: bash
@@ -44,8 +80,7 @@ jobs:
           mv Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64 godot
           chmod +x godot
 
-          # 2. Run Import with Timeout
-          # We append '|| true' so the CI doesn't stop if Godot crashes on exit.
+          # 2. Run Import with Timeout (and ignore exit code 11)
           echo "Starting Import..."
           timeout 1m ./godot --headless --path ./C.H.E.S.S --editor --quit || true
           
@@ -58,7 +93,7 @@ jobs:
           fi
 
       # ---------------------------------------------------------
-      # STEP 2: Export (Safe because .godot exists now)
+      # STEP 2: Export
       # ---------------------------------------------------------
       - name: Godot Export
         uses: firebelley/godot-export@v5.2.1
@@ -68,9 +103,8 @@ jobs:
           relative_project_path: "./C.H.E.S.S" 
           archive_output: true
           export_preset: ${{ matrix.platform }}
-          use_preset_export_path: true 
-          # Cache is FALSE because we handled import manually above
-          cache: false 
+          use_preset_export_path: true
+          cache: false
           additional_args: "--headless"
 
       - name: Publish to Itch.io
@@ -81,13 +115,14 @@ jobs:
           ITCH_GAME: ${{ env.ITCH_GAME }}
           ITCH_USER: ${{ env.ITCH_USER }}
           PACKAGE: "C.H.E.S.S/exports/${{ matrix.platform }}.zip" 
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          VERSION: ${{ steps.parse_data.outputs.VERSION }}
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         if: matrix.platform == 'windows' 
         with:
-          tag_name: v${{ steps.get_version.outputs.VERSION }}
-          name: Release v${{ steps.get_version.outputs.VERSION }}
-          generate_release_notes: true 
+          tag_name: ${{ steps.parse_data.outputs.TAG }}
+          name: C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator ${{ steps.parse_data.outputs.TAG }}
+          body: ${{ steps.parse_data.outputs.BODY }}
+          prerelease: ${{ steps.parse_data.outputs.PRERELEASE }}
           files: C.H.E.S.S/exports/*.zip
