@@ -102,6 +102,7 @@ jobs:
         id: rename_zip
         shell: bash
         run: |
+          # 1. Find the zip file this specific runner just created
           OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
           
           if [ -z "$OLD_ZIP" ]; then
@@ -109,6 +110,7 @@ jobs:
             exit 1
           fi
 
+          # 2. Determine correct suffix for this runner
           PLATFORM="${{ matrix.platform }}"
           if [ "$PLATFORM" == "windows" ]; then
              SHORT_PLAT="win"
@@ -118,10 +120,15 @@ jobs:
              SHORT_PLAT="linux"
           fi
 
+          # 3. Create the unique name
+          # E.g. "C.H.E.S.S... (win).zip" or "C.H.E.S.S... (linux).zip"
           NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
           NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
 
           mv "$OLD_ZIP" "$NEW_PATH"
+          echo "Renamed file to: $NEW_PATH"
+          
+          # Save path for subsequent steps
           echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
@@ -147,10 +154,10 @@ jobs:
           name: ${{ env.GAME_TITLE }} ${{ steps.parse_data.outputs.TAG }}
           body: ${{ steps.parse_data.outputs.BODY }}
           prerelease: ${{ steps.parse_data.outputs.PRERELEASE }}
-          files: C.H.E.S.S/exports/*.zip
+          files: ${{ env.GAME_PACKAGE_PATH }}
 
       # ---------------------------------------------------------
-      # STEP 6: Notify Discord
+      # STEP 6: Notify Discord (Windows Only)
       # ---------------------------------------------------------
       - name: Notify Discord of Release
         if: matrix.platform == 'windows'
