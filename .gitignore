@@ -6,6 +6,9 @@
 .sconsign.dblite
 /build_cache/
 
+.vscode/
+/C.H.E.S.S/.vscode/
+
 /C.H.E.S.S/exports/
 /C.H.E.S.S/addons/
 
