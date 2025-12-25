@@ -1,0 +1,58 @@
+@tool
+extends EditorExportPlugin
+
+var editorPlugin:EditorPlugin
+
+const uploadPopup=preload("res://addons/itchio_uploader/upload_progress/upload_progress.tscn")
+
+func _get_export_options(platform: EditorExportPlatform) -> Array[Dictionary]:
+	return [
+		{
+			"option":{"name":"Itch.io/Upload to Itch.io","type":Variant.Type.TYPE_BOOL},
+			"default_value":true,
+		},
+		{
+			"option":{"name":"Itch.io/Channel","type":Variant.Type.TYPE_STRING},
+			"default_value":platform.get_os_name().to_lower(),
+		},
+		{
+			"option":{"name":"Itch.io/Version/Use Godot project version","type":Variant.Type.TYPE_BOOL},
+			"default_value":false,
+		},
+		{
+			"option":{"name":"Itch.io/Version/Version file","type":Variant.Type.TYPE_STRING,"hint":PROPERTY_HINT_FILE},
+			"default_value":"",
+		}
+	]
+
+func _get_name()->String:
+	return "Itch.io Uploader"
+
+func _export_end() -> void:
+	if get_option("Itch.io/Upload to Itch.io") and ItchSettings.areSettingsComplete():
+		uploadToButler()
+
+func uploadToButler():
+	var channel=get_option("Itch.io/Channel")
+	var path=ProjectSettings.globalize_path("res://"+get_export_preset().get_export_path())
+	if path.get_extension()!='zip':
+		path=path.get_base_dir()
+	ItchSettings.loadSettingsFromFile()
+	var args=["push",path,ItchSettings.username+"/"+ItchSettings.gameName+":"+channel]
+	if get_option("Itch.io/Version/Use Godot project version"):
+		args.append('--userversion')
+		args.append(ProjectSettings.get_setting("application/config/version"))
+	elif not get_option("Itch.io/Version/Version file").is_empty():
+		args.append("--userversion-file")
+		args.append(get_option("Itch.io/Version/Version file"))
+	var uploadPipe=OS.execute_with_pipe(ItchSettings.butlerPath,args)
+	if itchStatus.uploadedGames.has(channel):
+		itchStatus.uploadedGames.get(channel).set(0,get_export_platform().get_os_name())
+	else:
+		var channelInfo=PackedStringArray()
+		channelInfo.append(get_export_platform().get_os_name())
+		itchStatus.uploadedGames.set(channel,channelInfo)
+	var popup=uploadPopup.instantiate()
+	popup.uploadPipe=uploadPipe
+	popup.channel=channel
+	editorPlugin.add_child(popup)

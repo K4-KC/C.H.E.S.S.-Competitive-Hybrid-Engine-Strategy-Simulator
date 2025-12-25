@@ -1,0 +1,45 @@
+[gd_scene load_steps=2 format=3 uid="uid://dlr8uuil84tfv"]
+
+[ext_resource type="Script" uid="uid://docm4abuuc6s8" path="res://addons/itchio_uploader/itchio_login/itchlogin.gd" id="1_ejt4t"]
+
+[node name="Itch io login" type="AcceptDialog"]
+oversampling_override = 1.0
+title = "Itch.io login"
+initial_position = 4
+size = Vector2i(500, 120)
+visible = true
+minimize_disabled = false
+ok_button_text = "Close"
+script = ExtResource("1_ejt4t")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 492.0
+offset_bottom = 71.0
+
+[node name="Status" type="Label" parent="VBoxContainer"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+autowrap_mode = 2
+
+[node name="Link" type="LinkButton" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+text = "Loading"
+underline = 2
+
+[node name="Login check" type="Timer" parent="."]
+autostart = true
+
+[node name="LogOutConfirm" type="ConfirmationDialog" parent="."]
+oversampling_override = 1.0
+title = "Log Out"
+initial_position = 4
+size = Vector2i(200, 106)
+ok_button_text = "Yes"
+dialog_text = "Are you SURE you want to log out"
+dialog_autowrap = true
+cancel_button_text = "No"
+
+[connection signal="confirmed" from="LogOutConfirm" to="." method="logout"]
