@@ -119,7 +119,7 @@ jobs:
           CHANNEL: ${{ matrix.platform }}
           ITCH_GAME: ${{ env.ITCH_GAME }}
           ITCH_USER: ${{ env.ITCH_USER }}
-          PACKAGE: "C.H.E.S.S/exports/${{ matrix.platform }}.zip" 
+          PACKAGE: "C.H.E.S.S/exports/C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator ${{ matrix.platform }}.zip" 
           VERSION: ${{ steps.parse_data.outputs.VERSION }}
 
       - name: GitHub Release
