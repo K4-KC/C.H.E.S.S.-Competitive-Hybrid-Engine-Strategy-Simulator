@@ -38,6 +38,7 @@ jobs:
           archive_output: true
           export_preset: ${{ matrix.platform }}
           use_preset_export_path: true 
+          additional_args: "--headless"
 
       - name: Publish to Itch.io
         uses: yeslayla/butler-publish-itchio-action@master
