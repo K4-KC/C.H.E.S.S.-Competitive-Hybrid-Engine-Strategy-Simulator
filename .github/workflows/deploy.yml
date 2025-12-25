@@ -25,8 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # fetch-depth: 0
-          sparse-checkout: .
+          lfs: true # For large assets
 
       # ---------------------------------------------------------
       # STEP 0: Smart Changelog Parser
@@ -40,7 +39,7 @@ jobs:
           ls -R
           echo "--------------------------------------"
           # 🔍 DEBUGGING END
-          
+
           FILE="C.H.E.S.S/CHANGELOGS.md"
           
           # 1. Grab the first header line (e.g., "## v0.1.5")
