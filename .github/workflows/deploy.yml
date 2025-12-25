@@ -35,7 +35,12 @@ jobs:
         id: parse_data
         shell: bash
         run: |
-          # Updated filename here
+          # 🔍 DEBUGGING START: Show me the file structure
+          echo "Listing all files in the repository:"
+          ls -R
+          echo "--------------------------------------"
+          # 🔍 DEBUGGING END
+          
           FILE="C.H.E.S.S/CHANGELOGS.md"
           
           # 1. Grab the first header line (e.g., "## v0.1.5")
