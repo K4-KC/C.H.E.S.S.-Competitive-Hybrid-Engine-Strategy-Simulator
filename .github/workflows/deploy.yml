@@ -112,6 +112,29 @@ jobs:
           cache: false
           additional_args: "--headless"
 
+      # ---------------------------------------------------------
+      # STEP 3: Find the Zip File (Handles long names + spaces)
+      # ---------------------------------------------------------
+      - name: Find Exported Zip
+        id: find_zip
+        shell: bash
+        run: |
+          # Find the only .zip file in the exports folder
+          # We use 'find' to handle spaces in filenames correctly
+          ZIP_PATH=$(find C.H.E.S.S/exports -name "*.zip" -type f | head -n 1)
+          
+          if [ -z "$ZIP_PATH" ]; then
+            echo "❌ No zip file found in C.H.E.S.S/exports!"
+            exit 1
+          fi
+
+          echo "Found package: $ZIP_PATH"
+          # Save the path to an environment variable for the next step
+          echo "GAME_PACKAGE_PATH=$ZIP_PATH" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # STEP 4: Publish to Itch.io
+      # ---------------------------------------------------------
       - name: Publish to Itch.io
         uses: yeslayla/butler-publish-itchio-action@master
         env:
@@ -119,8 +142,13 @@ jobs:
           CHANNEL: ${{ matrix.platform }}
           ITCH_GAME: ${{ env.ITCH_GAME }}
           ITCH_USER: ${{ env.ITCH_USER }}
-          PACKAGE: "C.H.E.S.S/exports/C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator ${{ matrix.platform }}.zip" 
+          # Use the variable we found in the previous step
+          PACKAGE: ${{ env.GAME_PACKAGE_PATH }}
           VERSION: ${{ steps.parse_data.outputs.VERSION }}
+      
+      # ---------------------------------------------------------
+      # STEP 5: Create GitHub Release
+      # ---------------------------------------------------------
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
