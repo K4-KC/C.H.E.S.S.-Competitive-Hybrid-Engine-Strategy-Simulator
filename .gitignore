@@ -6,9 +6,8 @@
 .sconsign.dblite
 /build_cache/
 
-/chess_godot/bin
-
-/keychan-chess/exports/
+/C.H.E.S.S/exports/
+/C.H.E.S.S/addons/
 
 *.obj
 src/*.obj
@@ -21,4 +20,5 @@ src/*.obj
 *.zip
 /.claude
 
-keychan-chess/bin/~libkCC_modules.windows.template_debug.x86_64.dll
+*.TMP
+C.H.E.S.S/bin/~libkCC_modules.windows.template_debug.x86_64.dll

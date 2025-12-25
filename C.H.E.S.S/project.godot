@@ -21,10 +21,6 @@ window/size/viewport_width=512
 window/size/viewport_height=512
 window/size/resizable=false
 
-[editor_plugins]
-
-enabled=PackedStringArray("res://addons/itchio_uploader/plugin.cfg")
-
 [file_customization]
 
 folder_colors={
