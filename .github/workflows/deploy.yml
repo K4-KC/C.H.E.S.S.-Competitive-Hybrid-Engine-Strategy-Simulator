@@ -108,22 +108,20 @@ jobs:
         id: rename_zip
         shell: bash
         run: |
-          # 1. Find the ONLY zip file in the directory (guaranteed by the clean step above)
-          OLD_ZIP=$(find C.H.E.S.S/exports -name "*.zip" -type f)
+          # 1. Define the specific file we expect for THIS runner
+          # The logs confirm the action outputs files named: windows.zip, linux.zip, macos.zip
+          TARGET_FILE="${{ matrix.platform }}.zip"
+          OLD_PATH="C.H.E.S.S/exports/$TARGET_FILE"
           
-          # Sanity check: Ensure we found exactly one file
-          FILE_COUNT=$(echo "$OLD_ZIP" | wc -l)
-          if [ -z "$OLD_ZIP" ]; then
-            echo "❌ No zip file found! Did the export fail?"
-            exit 1
-          fi
-          if [ "$FILE_COUNT" -gt 1 ]; then
-            echo "❌ Found multiple zip files! Cleaning failed or export created extras:"
-            echo "$OLD_ZIP"
+          # 2. Check if the specific file exists
+          if [ ! -f "$OLD_PATH" ]; then
+            echo "❌ Could not find expected export: $OLD_PATH"
+            echo "📂 Contents of export directory:"
+            ls -R C.H.E.S.S/exports
             exit 1
           fi
 
-          # 2. Determine correct suffix for this runner
+          # 3. Determine correct suffix for the final filename
           PLATFORM="${{ matrix.platform }}"
           if [ "$PLATFORM" == "windows" ]; then
               SHORT_PLAT="win"
@@ -133,13 +131,17 @@ jobs:
               SHORT_PLAT="linux"
           fi
 
-          # 3. Create the unique name
+          # 4. Create the unique name and rename
           NEW_NAME="${{ env.GAME_TITLE }} ($SHORT_PLAT).zip"
           NEW_PATH="C.H.E.S.S/exports/$NEW_NAME"
 
-          mv "$OLD_ZIP" "$NEW_PATH"
-          echo "✅ Renamed '$OLD_ZIP' to: '$NEW_PATH'"
+          mv "$OLD_PATH" "$NEW_PATH"
+          echo "✅ Renamed '$OLD_PATH' to: '$NEW_PATH'"
           
+          # 5. (Optional) Cleanup other platform files to prevent confusion in artifacts
+          # This removes linux.zip/macos.zip if we are currently on the windows runner
+          find C.H.E.S.S/exports -type f -name "*.zip" ! -name "$NEW_NAME" -delete
+
           # Save path for subsequent steps
           echo "GAME_PACKAGE_PATH=$NEW_PATH" >> $GITHUB_ENV
 
