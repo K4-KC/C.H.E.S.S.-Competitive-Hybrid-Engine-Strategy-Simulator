@@ -36,7 +36,8 @@ jobs:
           archive_output: true
           export_preset: ${{ matrix.platform }}
           use_preset_export_path: true 
-          additional_args: "--headless"
+          cache: true
+          additional_args: "--headless --verbose"
         timeout-minutes: 25
 
       - name: Publish to Itch.io
