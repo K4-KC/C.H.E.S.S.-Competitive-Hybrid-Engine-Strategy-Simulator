@@ -3,7 +3,7 @@ name: "Build and Release"
 on:
   push:
     paths:
-      - 'C.H.E.S.S/VERSION' # Updated path
+      - 'C.H.E.S.S/VERSION'
 
 env:
   GODOT_VERSION: "4.5"
@@ -27,6 +27,36 @@ jobs:
         id: get_version
         run: echo "VERSION=$(cat C.H.E.S.S/VERSION)" >> $GITHUB_OUTPUT 
 
+      # ---------------------------------------------------------
+      # STEP 1: Manual Import with "Crash Protection"
+      # This runs the import, allows it to timeout (if hung), 
+      # and ignores the Signal 11 crash on exit.
+      # ---------------------------------------------------------
+      - name: Setup and Import Godot (Ignore Crash)
+        shell: bash
+        run: |
+          # 1. Download Godot 4.5
+          wget -q https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip
+          unzip -q Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip
+          mv Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64 godot
+          chmod +x godot
+
+          # 2. Run Import with Timeout
+          # We append '|| true' so the CI doesn't stop if Godot crashes on exit.
+          echo "Starting Import..."
+          timeout 1m ./godot --headless --path ./C.H.E.S.S --editor --quit || true
+          
+          # 3. Verify Success
+          if [ -d "./C.H.E.S.S/.godot" ]; then
+              echo "✅ .godot folder exists. Import was successful."
+          else
+              echo "❌ .godot folder missing. Import failed."
+              exit 1
+          fi
+
+      # ---------------------------------------------------------
+      # STEP 2: Export (Safe because .godot exists now)
+      # ---------------------------------------------------------
       - name: Godot Export
         uses: firebelley/godot-export@v5.2.1
         with:
@@ -36,9 +66,9 @@ jobs:
           archive_output: true
           export_preset: ${{ matrix.platform }}
           use_preset_export_path: true 
-          cache: true
-          additional_args: "--headless --verbose"
-        timeout-minutes: 25
+          # Cache is FALSE because we handled import manually above
+          cache: false 
+          additional_args: "--headless"
 
       - name: Publish to Itch.io
         uses: yeslayla/butler-publish-itchio-action@master
@@ -47,7 +77,6 @@ jobs:
           CHANNEL: ${{ matrix.platform }}
           ITCH_GAME: ${{ env.ITCH_GAME }}
           ITCH_USER: ${{ env.ITCH_USER }}
-          # RELATIVE to the project path
           PACKAGE: "C.H.E.S.S/exports/${{ matrix.platform }}.zip" 
           VERSION: ${{ steps.get_version.outputs.VERSION }}
 
@@ -57,5 +86,5 @@ jobs:
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: Release v${{ steps.get_version.outputs.VERSION }}
-          generate_release_notes: true
+          generate_release_notes: true 
           files: C.H.E.S.S/exports/*.zip
