@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="keyChanChess_"
+config/name="C.H.E.S.S."
 run/main_scene="uid://bxebxg8uuppol"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
