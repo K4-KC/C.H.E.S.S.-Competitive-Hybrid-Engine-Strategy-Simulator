@@ -1,0 +1,57 @@
+name: "Build and Release"
+
+on:
+  push:
+    paths:
+      - 'VERSION' # Triggers ONLY when this file is modified
+
+env:
+  GODOT_VERSION: "4.5"
+  ITCH_USER: "K4-KC"
+  ITCH_GAME: "chess"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [windows, linux, macos]
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read Version
+        id: get_version
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT # Reads the file content [5, 6]
+
+      - name: Godot Export
+        uses: firebelley/godot-export@v5.2.1
+        with:
+          godot_executable_download_url: "https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip"
+          godot_export_templates_download_url: "https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_export_templates.tpz"
+          relative_project_path: "./"
+          archive_output: true # Automatically zips the build
+          export_preset: ${{ matrix.platform }}
+          use_preset_export_path: true # Uses the paths you set in Godot (res://exports)
+
+      - name: Publish to Itch.io
+        uses: yeslayla/butler-publish-itchio-action@master
+        env:
+          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_API_KEY }}
+          CHANNEL: ${{ matrix.platform }}
+          ITCH_GAME: ${{ env.ITCH_GAME }}
+          ITCH_USER: ${{ env.ITCH_USER }}
+          PACKAGE: "exports/${{ matrix.platform }}" # Pushes the contents of your export folder [4]
+          VERSION: ${{ steps.get_version.outputs.VERSION }} # Passes the version to Itch [4]
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: matrix.platform == 'windows' # Creates the release once using the Windows runner
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          generate_release_notes: true # Auto-generates changelog from commit history 
+          files: exports/**/*.zip
