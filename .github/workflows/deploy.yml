@@ -10,6 +10,9 @@ env:
   ITCH_USER: "K4-KC"
   ITCH_GAME: "chess"
 
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
