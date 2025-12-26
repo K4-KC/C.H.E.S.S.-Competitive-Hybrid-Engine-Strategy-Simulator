@@ -193,7 +193,7 @@ jobs:
                 "url": "$ITCH_URL",
                 "description": "A new version of **C.H.E.S.S** is available!",
                 "thumbnail": {
-                  "url": "https://img.itch.zone/aW1nLzEwODQ3MzYucG5n/original/xW%2B%2Bq.png" 
+                  "url": "https://raw.githubusercontent.com/K4-KC/chess-ai/main/C.H.E.S.S/icon.png" 
                 },
                 "fields": [
                   {
