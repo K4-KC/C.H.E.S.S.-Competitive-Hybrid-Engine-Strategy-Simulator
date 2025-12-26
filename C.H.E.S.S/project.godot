@@ -10,10 +10,10 @@ config_version=5
 
 [application]
 
-config/name="C.H.E.S.S."
+config/name="C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator"
 run/main_scene="uid://bxebxg8uuppol"
 config/features=PackedStringArray("4.5", "Forward Plus")
-config/icon="res://icon.svg"
+config/icon="uid://bbhm2rdus2gil"
 
 [display]
 
