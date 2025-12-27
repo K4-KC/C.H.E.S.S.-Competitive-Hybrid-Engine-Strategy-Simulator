@@ -269,7 +269,7 @@ No need to write essays in your PR - just explain what you changed and why. We'r
 
 ## License
 
-[Add your license here]
+MIT License
 
 ## Acknowledgments
 
