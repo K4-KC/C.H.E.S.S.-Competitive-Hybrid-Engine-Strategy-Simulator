@@ -88,8 +88,8 @@ The following features are part of the vision but not yet implemented:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/C.H.E.S.S..git
-   cd C.H.E.S.S.
+   git clone https://github.com/K4-KC/C.H.E.S.S.-Competitive-Hybrid-Engine-Strategy-Simulator
+   cd C.H.E.S.S.-Competitive-Hybrid-Engine-Strategy-Simulator
    ```
 
 2. **Install Python dependencies**
@@ -109,7 +109,7 @@ The following features are part of the vision but not yet implemented:
 
 5. **Open in Godot**
    - Launch Godot Engine
-   - Click "Import" and select `C.H.E.S.S/project.godot`
+   - Click "Import" and select `C.H.E.S.S.-Competitive-Hybrid-Engine-Strategy-Simulator/project.godot`
    - Press F5 to run!
 
 ## Platform Setup
@@ -136,7 +136,7 @@ Windows builds require WSL (Windows Subsystem for Linux) with Ubuntu.
 3. **Navigate to project in WSL**
    ```bash
    # Windows drives are mounted at /mnt/
-   cd /mnt/c/Projects/C.H.E.S.S.  # Adjust path to your clone location
+   cd /mnt/c/PathToYourProject/C.H.E.S.S.-Competitive-Hybrid-Engine-Strategy-Simulator
    ```
 
 4. **Build modules**
@@ -191,14 +191,14 @@ Windows builds require WSL (Windows Subsystem for Linux) with Ubuntu.
    ./build_modules.sh
    ```
 
-   **Note:** For cross-compilation to macOS from Linux, see [OSXCROSS_SETUP.md](OSXCROSS_SETUP.md).
-
 ## Optional Setup: Stockfish
 
 Stockfish is included for debugging, perft tests, and position analysis.
 
+Download the appropriate Stockfish binary for your platform from [the official Stockfish website](https://stockfishchess.org/download/) and place it in the `stockfish/` directory.
+
 ### Windows
-The repository includes a pre-compiled Windows executable at `stockfish/stockfish-windows-x86-64-avx2.exe`. No additional setup needed!
+Download the Windows binary and extract `stockfish.exe` to the `stockfish/` directory.
 
 ### Linux
 ```bash
@@ -224,10 +224,6 @@ C.H.E.S.S./
 │   ├── assets/               # Sprites, fonts, textures
 │   ├── scenes/               # Game scenes (.tscn/.gd)
 │   ├── modules/              # C++ source code
-│   │   ├── board.cpp/h       # Chess logic
-│   │   ├── agent.cpp/h       # AI algorithms
-│   │   ├── neural_network.cpp/h
-│   │   └── zobrist.cpp/h
 │   ├── bin/                  # Compiled libraries (.dll/.so)
 │   └── project.godot
 ├── aseprite/                 # Pixel art source files
@@ -238,39 +234,15 @@ C.H.E.S.S./
 └── requirements.txt          # Python dependencies
 ```
 
-## Building Modules Manually
-
-If you prefer manual builds over the automated script:
-
-### Windows (in WSL)
-```bash
-scons platform=windows target=template_debug use_mingw=yes -j$(nproc)
-scons platform=windows target=template_release use_mingw=yes -j$(nproc)
-```
-
-### Linux
-```bash
-scons platform=linux target=template_debug -j$(nproc)
-scons platform=linux target=template_release -j$(nproc)
-```
-
-### macOS
-```bash
-scons platform=macos target=template_debug -j$(sysctl -n hw.ncpu)
-scons platform=macos target=template_release -j$(sysctl -n hw.ncpu)
-```
-
-Compiled libraries are output to `C.H.E.S.S/bin/`.
-
 ## Contributing
 
 We'd love your help! This is a casual project with a friendly development environment.
 
 ### Areas We Need Help With
 
+- **Visuals**: More pixel art, animations, UI elements
 - **AI Improvements**: Better move ordering, opening books, neural network integration
 - **Game Features**: Engine building UI, team management, multiplayer networking
-- **Visuals**: More pixel art, animations, UI elements
 - **Testing**: Bug fixes, performance profiling, documentation
 - **Translations**: Help make C.H.E.S.S. accessible worldwide
 
@@ -293,7 +265,7 @@ No need to write essays in your PR - just explain what you changed and why. We'r
 
 - **Build Issues**: Double-check you have all prerequisites installed
 - **Bug Reports**: Open an issue with what you expected vs what happened
-- **Questions**: Start a discussion in the repository
+- **Questions**: Start a discussion in the discord server [Woodworks](https://discord.gg/n4kdHQFh)
 
 ## License
 
@@ -306,5 +278,3 @@ No need to write essays in your PR - just explain what you changed and why. We'r
 - Powered by the timeless game of chess
 
 ---
-
-**Let's build the ultimate chess engine strategy game together!**

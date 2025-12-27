@@ -24,6 +24,11 @@ func _ready():
 	add_child(ui_layer)
 	# setup_main_menu_ui()
 
+func _input(event):
+	# Checks if a key was pressed and if that key is 'Q'
+	if event is InputEventKey and event.pressed and event.keycode == KEY_Q:
+		get_tree().quit()
+
 func setup_main_menu_ui():
 	# Setup Custom Theme
 	var menu_theme = Theme.new()

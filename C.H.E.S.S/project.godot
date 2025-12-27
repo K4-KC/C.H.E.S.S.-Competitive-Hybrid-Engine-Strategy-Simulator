@@ -14,11 +14,12 @@ config/name="C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator"
 run/main_scene="uid://bxebxg8uuppol"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="uid://bbhm2rdus2gil"
+config/windows_native_icon="res://chess.ico"
 
 [display]
 
-window/size/viewport_width=512
-window/size/viewport_height=512
+window/size/viewport_width=470
+window/size/viewport_height=280
 window/size/resizable=false
 
 [file_customization]
