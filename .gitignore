@@ -1,27 +1,44 @@
-# Godot 4+ specific ignores
-.godot/
-/android/
-
-/godot-cpp
-.sconsign.dblite
-/build_cache/
-
+# OS System Files
+.DS_Store
+Thumbs.db
+.vs/
 .vscode/
-/C.H.E.S.S/.vscode/
+.idea/
+.claude/
 
-/C.H.E.S.S/exports/
-/C.H.E.S.S/addons/
+# Python Virtual Environments
+__pycache__/
+venv/
+.env
 
+# C++ Compilation Artifacts
+*.o
 *.obj
-src/*.obj
-
-/venv
+*.a
 *.lib
+*.pdb
 *.exp
-*.dblite
-*.os
-*.zip
-/.claude
+*.dSYM/
+.sconsign.dblite
+compile_commands.json
+build_cache/
 
+# Exported Game Binaries
+*.pck
+*.zip
+*.exe
+*.apk
+*.aab
+*.ipa
+
+# C.H.E.S.S
+C.H.E.S.S/.godot/
+C.H.E.S.S/*.translation
+C.H.E.S.S/bin/
+C.H.E.S.S/exports/
+C.H.E.S.S/addons/
+
+# Miscellaneous
+stockfish/
+godot-cpp/
 *.TMP
-C.H.E.S.S/bin/~libkCC_modules.windows.template_debug.x86_64.dll
