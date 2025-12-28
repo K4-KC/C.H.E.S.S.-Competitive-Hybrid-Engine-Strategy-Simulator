@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bdt74e01ietix"
-path="res://.godot/imported/n1.png-8ccc6af1dcc965373f76e4c56bef75b0.ctex"
+uid="uid://cyulxkjyhdeqn"
+path="res://.godot/imported/board_sheet.png-cb08257c72c990beccd9bba3dbfe0631.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/pieces/n1.png"
-dest_files=["res://.godot/imported/n1.png-8ccc6af1dcc965373f76e4c56bef75b0.ctex"]
+source_file="res://assets/sprites/board_sheet.png"
+dest_files=["res://.godot/imported/board_sheet.png-cb08257c72c990beccd9bba3dbfe0631.ctex"]
 
 [params]
 

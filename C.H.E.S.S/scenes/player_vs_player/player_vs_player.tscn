@@ -1,11 +1,60 @@
-[gd_scene load_steps=3 format=3 uid="uid://cfnymn6n4bk1u"]
+[gd_scene load_steps=4 format=4 uid="uid://cfnymn6n4bk1u"]
 
-[ext_resource type="Script" uid="uid://07hpleqtveks" path="res://scenes/player_vs_player/player_vs_player.gd" id="1_urtwi"]
-[ext_resource type="Texture2D" uid="uid://5ce14jlmthig" path="res://assets/textures/backgrounds/board0.png" id="2_pstoo"]
+[ext_resource type="Script" uid="uid://5xwebcu0fic5" path="res://scenes/player_vs_player/board_0.gd" id="2_i0gi0"]
+
+[sub_resource type="PortableCompressedTexture2D" id="PortableCompressedTexture2D_5jo2e"]
+_data = PackedByteArray("AAADAAUAAAABAAAA4AEAAA4BAADuAAAAUklGRuYAAABXRUJQVlA4TNoAAAAv30FDEB+gIG0DFlbGrkCADHkghlgwxVHsa/4D8i9xwHVs22qSJv0fKygl4FaA9kOkAGxjCbyZe9FIRP8VuW3bMLdm9huW2qj9V9MGwLZt+/kFcs0huvK5X9AA9lcdYHvlyDWGNPO/U2ZBehVkF8gVQZQRZexs23YydzT1Phd/meUA5BqqFb5dduEZgFlKrrlakVpjtSg8M8sByNVVq/N22YVnAGYpuRZqjdXaqEXhmVkOQK5Qra5aQ7XswjMAs5RckVrzt4vCM7McgFz+x8wujlIbtf9q/xVEWA==")
+size_override = Vector2(480, 270)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_i0gi0"]
+atlas = SubResource("PortableCompressedTexture2D_5jo2e")
+region = Rect2(176, 64, 128, 128)
 
 [node name="PlayerVsPlayer" type="Node2D"]
-script = ExtResource("1_urtwi")
 
-[node name="Board0" type="Sprite2D" parent="."]
-position = Vector2(256, 256)
-texture = ExtResource("2_pstoo")
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="board0" type="TextureRect" parent="CanvasLayer"]
+texture_filter = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = 20.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = SubResource("AtlasTexture_i0gi0")
+script = ExtResource("2_i0gi0")
+metadata/_aseprite_wizard_interface_config_ = {
+"layer_section": true,
+"output_section": true,
+"pending_changes": {},
+"slice_section": true
+}
+metadata/_aseprite_wizard_config_ = {
+"convert_fps_field": 60.0,
+"convert_ms_field": 16.0,
+"convert_to_fps": false,
+"embed_tex": true,
+"i_mode": 1,
+"keep_anim_length": false,
+"layers": ["board", "labels"],
+"o_ex_p": "",
+"o_folder": "",
+"o_name": "",
+"only_visible": false,
+"player": "",
+"scale": "1.0",
+"slice": "board0",
+"source": "res://aseprite/CHESS_UI.aseprite",
+"source_uid": 7685038467244015920
+}
+metadata/_aseprite_wizard_source_file_hash_ = "f21065e47dc382706cff9f970b3968d7"
+
+[node name="background" type="TextureRect" parent="CanvasLayer"]
+offset_right = 40.0
+offset_bottom = 40.0
