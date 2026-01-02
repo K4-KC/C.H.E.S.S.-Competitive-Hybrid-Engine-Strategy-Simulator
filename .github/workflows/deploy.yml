@@ -9,7 +9,7 @@ env:
   GODOT_VERSION: "4.5"
   ITCH_USER: "K4-KC"
   ITCH_GAME: "chess"
-  GAME_TITLE: "C.H.E.S.S. - Competitive Hybrid Engine Strategy Simulator"
+  GAME_TITLE: "Competitive Hybrid Engine Strategy Simulator"
 
 permissions:
   contents: write

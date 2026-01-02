@@ -42,3 +42,4 @@ C.H.E.S.S/addons/
 stockfish/
 godot-cpp/
 *.TMP
+*.code-workspace
